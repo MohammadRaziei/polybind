@@ -1,0 +1,358 @@
+"""
+tests/test_cli.py
+~~~~~~~~~~~~~~~~~
+Integration tests for the polybind CLI.
+
+Strategy
+--------
+* The fixture .pyi lives at  tests/data/_my_module.pyi  (absolute path via
+  Path(__file__).parent / "data").
+* The CLI is invoked as a real subprocess:  python -m polybind <args>
+* Generated output goes into pytest's  tmp_path  (a fresh temp dir per test).
+* Where tests need to *import* the generated wrapper, they also copy the
+  fake C extension  tests/data/_my_module.py  into tmp_path so that the
+  generated  `import _my_module`  resolves correctly.
+"""
+
+from __future__ import annotations
+
+import ast
+import importlib.util
+import os
+import shutil
+import subprocess
+import sys
+import types
+from pathlib import Path
+
+import pytest
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+DATA_DIR: Path = Path(__file__).resolve().parent / "data"
+STUB_PYI: Path = DATA_DIR / "_my_module.pyi"  # absolute path to the fixture
+REPO_ROOT: Path = Path(__file__).resolve().parent.parent
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _run(*args: str | Path, extra_pythonpath: Path | None = None) -> subprocess.CompletedProcess:
+    """
+    Run  python -m polybind <args>  as a subprocess.
+
+    PYTHONPATH always includes REPO_ROOT so the polybind package is
+    importable regardless of whether it has been pip-installed.
+    Extra entries can be prepended via  extra_pythonpath.
+    """
+    pythonpath_parts = [str(REPO_ROOT)]
+    if extra_pythonpath is not None:
+        pythonpath_parts.insert(0, str(extra_pythonpath))
+
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(pythonpath_parts),
+    }
+    return subprocess.run(
+        [sys.executable, "-m", "polybind", *[str(a) for a in args]],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def _import_from_path(module_name: str, path: Path) -> types.ModuleType:
+    """
+    Import a .py file from an absolute path and return the module object.
+    Useful for verifying the *runtime* behaviour of generated wrappers.
+    """
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec is not None and spec.loader is not None, f"Cannot load {path}"
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = mod          # register so relative imports work
+    spec.loader.exec_module(mod)            # type: ignore[union-attr]
+    return mod
+
+
+def _prepare_tmp(tmp_path: Path) -> tuple[Path, Path]:
+    """
+    Copy _my_module.py (fake C extension) into tmp_path so that the
+    generated wrapper's  `import _my_module`  resolves correctly.
+
+    Returns (output_py, tmp_path).
+    """
+    shutil.copy(DATA_DIR / "_my_module.py", tmp_path / "_my_module.py")
+    return tmp_path / "my_module.py", tmp_path
+
+
+# ---------------------------------------------------------------------------
+# Tests — basic CLI behaviour
+# ---------------------------------------------------------------------------
+
+class TestCLIBasic:
+
+    def test_exit_zero_on_valid_stub(self, tmp_path):
+        out, _ = _prepare_tmp(tmp_path)
+        result = _run(STUB_PYI, "-o", out)
+
+        assert result.returncode == 0, (
+            f"CLI exited {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+    def test_output_file_is_created(self, tmp_path):
+        out, _ = _prepare_tmp(tmp_path)
+        _run(STUB_PYI, "-o", out)
+
+        assert out.exists(), f"Expected output file at {out}"
+
+    def test_default_output_path_strips_underscore(self, tmp_path):
+        """Without -o the output should be <stem>.py next to the input."""
+        # Copy stub into tmp so we control the directory
+        stub = tmp_path / "_my_module.pyi"
+        shutil.copy(STUB_PYI, stub)
+
+        result = _run(stub.resolve())
+        assert result.returncode == 0, result.stderr
+
+        expected = tmp_path / "my_module.py"
+        assert expected.exists(), f"Expected default output at {expected}"
+
+    def test_output_is_valid_python(self, tmp_path):
+        out, _ = _prepare_tmp(tmp_path)
+        _run(STUB_PYI, "-o", out)
+
+        source = out.read_text(encoding="utf-8")
+        try:
+            ast.parse(source)
+        except SyntaxError as exc:
+            pytest.fail(f"Generated file is not valid Python: {exc}\n\n{source}")
+
+    def test_header_names_source_pyi(self, tmp_path):
+        out, _ = _prepare_tmp(tmp_path)
+        _run(STUB_PYI, "-o", out)
+
+        content = out.read_text(encoding="utf-8")
+        assert "_my_module.pyi" in content, (
+            "Generated header must mention the source .pyi filename"
+        )
+
+    def test_autogenerated_notice_present(self, tmp_path):
+        out, _ = _prepare_tmp(tmp_path)
+        _run(STUB_PYI, "-o", out)
+
+        content = out.read_text(encoding="utf-8")
+        assert "auto-generated" in content.lower()
+
+
+# ---------------------------------------------------------------------------
+# Tests — generated source structure
+# ---------------------------------------------------------------------------
+
+class TestCLIGeneratedSource:
+
+    @pytest.fixture(autouse=True)
+    def generate(self, tmp_path):
+        self.out, self.tmp = _prepare_tmp(tmp_path)
+        _run(STUB_PYI, "-o", self.out)
+        self.content = self.out.read_text(encoding="utf-8")
+
+    def test_wrapper_class_present(self):
+        assert "class Box(_ABC):" in self.content
+
+    def test_type_map_val_present(self):
+        assert "_TYPE_MAP_VAL" in self.content
+
+    def test_all_cpp_variant_names_referenced(self):
+        for variant in ("_Box_int32", "_Box_float64", "_Box_str_"):
+            assert variant in self.content, f"{variant} missing from generated source"
+
+    def test_non_template_class_excluded(self):
+        assert "class Renderer:" not in self.content
+
+    def test_slots_present(self):
+        assert "__slots__" in self.content
+
+    def test_dunder_add_delegated(self):
+        assert "def __add__" in self.content
+
+    def test_dunder_mul_delegated(self):
+        assert "def __mul__" in self.content
+
+    def test_dunder_len_delegated(self):
+        assert "def __len__" in self.content
+
+    def test_class_getitem_present(self):
+        assert "__class_getitem__" in self.content
+
+    def test_import_uses_private_module_name(self):
+        # generated code must import _my_module (with leading underscore)
+        assert "import _my_module" in self.content
+
+
+# ---------------------------------------------------------------------------
+# Tests — runtime behaviour of the generated wrapper
+# ---------------------------------------------------------------------------
+
+class TestCLIRuntimeBehaviour:
+    """
+    Import the generated wrapper from tmp_path and exercise it at runtime.
+    _my_module.py (the fake C extension) is placed next to it so
+    `import _my_module` resolves correctly.
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup(self, tmp_path):
+        out, tmp = _prepare_tmp(tmp_path)
+        _run(STUB_PYI, "-o", out)
+
+        # Register _my_module from tmp so the generated import resolves.
+        _import_from_path("_my_module", tmp / "_my_module.py")
+
+        # Import the generated wrapper itself.
+        self.mod = _import_from_path("my_module", out)
+        self.Box = self.mod.Box
+
+    def test_box_int_type_is_box(self):
+        b = self.Box(10)
+        assert type(b) is self.Box
+
+    def test_box_float_type_is_box(self):
+        b = self.Box(3.14)
+        assert type(b) is self.Box
+
+    def test_box_str_type_is_box(self):
+        b = self.Box("hello")
+        assert type(b) is self.Box
+
+    def test_isinstance_int(self):
+        b = self.Box(42)
+        assert isinstance(b, self.Box)
+
+    def test_isinstance_float(self):
+        b = self.Box(1.5)
+        assert isinstance(b, self.Box)
+
+    def test_isinstance_str(self):
+        b = self.Box("world")
+        assert isinstance(b, self.Box)
+
+    def test_unsupported_type_raises(self):
+        with pytest.raises(TypeError, match="does not support type"):
+            self.Box([1, 2, 3])
+
+    def test_delegation_value_method(self):
+        b = self.Box(99)
+        assert b.value() == 99
+
+    def test_delegation_str_len(self):
+        b = self.Box("hello")
+        assert len(b) == 5
+
+    def test_class_getitem_returns_cpp_class(self):
+        import _my_module as _ext
+        assert self.Box[int] is _ext._Box_int32
+        assert self.Box[float] is _ext._Box_float64
+        assert self.Box[str] is _ext._Box_str_
+
+
+# ---------------------------------------------------------------------------
+# Tests — dry-run flag
+# ---------------------------------------------------------------------------
+
+class TestCLIDryRun:
+
+    def test_prints_to_stdout(self, tmp_path):
+        out = tmp_path / "should_not_exist.py"
+        result = _run(STUB_PYI, "-o", out, "--dry-run")
+
+        assert result.returncode == 0, result.stderr
+        assert "class Box(_ABC):" in result.stdout
+
+    def test_does_not_write_file(self, tmp_path):
+        out = tmp_path / "should_not_exist.py"
+        _run(STUB_PYI, "-o", out, "--dry-run")
+
+        assert not out.exists(), "--dry-run must not write any output file"
+
+    def test_stdout_is_valid_python(self):
+        result = _run(STUB_PYI, "--dry-run")
+
+        assert result.returncode == 0, result.stderr
+        try:
+            ast.parse(result.stdout)
+        except SyntaxError as exc:
+            pytest.fail(f"--dry-run stdout is not valid Python: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Tests — --module-name override
+# ---------------------------------------------------------------------------
+
+class TestCLIModuleName:
+
+    def test_import_statement_uses_override(self, tmp_path):
+        out = tmp_path / "myengine.py"
+        result = _run(STUB_PYI, "-o", out, "--module-name", "custom_engine")
+
+        assert result.returncode == 0, result.stderr
+        content = out.read_text(encoding="utf-8")
+        assert "import _custom_engine" in content
+        assert "import _my_module" not in content
+
+
+# ---------------------------------------------------------------------------
+# Tests — verbose flag
+# ---------------------------------------------------------------------------
+
+class TestCLIVerbose:
+
+    def test_verbose_exit_zero(self, tmp_path):
+        out, _ = _prepare_tmp(tmp_path)
+        result = _run(STUB_PYI, "-o", out, "--verbose")
+
+        assert result.returncode == 0, result.stderr
+
+    def test_verbose_mentions_base_name(self, tmp_path):
+        out, _ = _prepare_tmp(tmp_path)
+        result = _run(STUB_PYI, "-o", out, "--verbose")
+
+        combined = result.stdout + result.stderr
+        assert "Box" in combined
+
+
+# ---------------------------------------------------------------------------
+# Tests — error cases
+# ---------------------------------------------------------------------------
+
+class TestCLIErrors:
+
+    def test_missing_pyi_exits_nonzero(self, tmp_path):
+        missing = (tmp_path / "ghost.pyi").resolve()
+        result = _run(missing)
+
+        assert result.returncode != 0
+        assert "error" in result.stderr.lower()
+
+    def test_stub_without_variants_exits_nonzero(self, tmp_path):
+        pyi = tmp_path / "_empty.pyi"
+        pyi.write_text("class Renderer: pass\n", encoding="utf-8")
+
+        result = _run(pyi.resolve())
+
+        assert result.returncode != 0
+        assert "error" in result.stderr.lower()
+
+    def test_wrong_extension_still_processes(self, tmp_path):
+        """A .py file instead of .pyi should warn but not hard-crash (exit 0 or 2)."""
+        fake = tmp_path / "_notastub.py"
+        fake.write_text(
+            "class Box_int32:\n    def __init__(self, val: int) -> None: ...\n"
+        )
+        out = tmp_path / "out.py"
+        result = _run(fake.resolve(), "-o", out)
+        # Either succeeds (stub is valid Python too) or exits with known error code.
+        assert result.returncode in (0, 2)
