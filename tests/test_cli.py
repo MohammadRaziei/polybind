@@ -164,7 +164,7 @@ class TestCLIGeneratedSource:
         assert "class Box(_ABC):" in self.content
 
     def test_type_map_val_present(self):
-        assert "_TYPE_MAP_VAL" in self.content
+        assert "_type_map_" in self.content
 
     def test_all_cpp_variant_names_referenced(self):
         for variant in ("_Box_int32", "_Box_float64", "_Box_str_"):

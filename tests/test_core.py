@@ -171,7 +171,7 @@ class TestCodeGenerator:
 
     def test_type_map_present(self):
         src = CodeGenerator(self._make_group()).generate()
-        assert "_TYPE_MAP_VAL" in src
+        assert "_type_map_" in src
 
     def test_import_uses_private_module(self):
         src = CodeGenerator(self._make_group(mod="mymod")).generate()
@@ -182,8 +182,15 @@ class TestCodeGenerator:
         assert "__slots__" in src
 
     def test_dunder_stubs_generated(self):
+        from polybind.core import MethodInfo
         g = self._make_group()
-        g.variants[0].dunder_methods = ["__add__", "__repr__"]
+        # dunder_methods is a computed property — inject via methods list
+        g.variants[0].methods = [
+            MethodInfo(name="__add__",  args=[("self", None), ("other", None)],
+                       return_annotation=None, docstring=None),
+            MethodInfo(name="__repr__", args=[("self", None)],
+                       return_annotation="str", docstring=None),
+        ]
         src = CodeGenerator(g).generate()
         assert "def __add__" in src
         assert "def __repr__" in src
@@ -327,7 +334,7 @@ class TestCLI:
         _run_cli(stub_pyi, "-o", out)
 
         content = out.read_text(encoding="utf-8")
-        assert "_TYPE_MAP_VAL" in content
+        assert "_type_map_" in content   # attr name is _type_map_<classname_lower>
         # all three raw variant names must appear
         assert "_Tensor_int32" in content
         assert "_Tensor_float64" in content
