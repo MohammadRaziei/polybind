@@ -189,8 +189,9 @@ class TestCLIGeneratedSource:
         assert "__class_getitem__" in self.content
 
     def test_import_uses_private_module_name(self):
-        # generated code must import _my_module (with leading underscore)
+        # generated code must import _my_module directly (no alias)
         assert "import _my_module" in self.content
+        assert "_my_module_ext" not in self.content
 
 
 # ---------------------------------------------------------------------------
@@ -300,8 +301,9 @@ class TestCLIModuleName:
 
         assert result.returncode == 0, result.stderr
         content = out.read_text(encoding="utf-8")
-        assert "import _custom_engine" in content
-        assert "import _my_module" not in content
+        # --module-name passes the name verbatim; no underscore is prepended
+        assert "import custom_engine" in content
+        assert "_my_module_ext" not in content
 
 
 # ---------------------------------------------------------------------------

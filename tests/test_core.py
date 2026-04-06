@@ -174,8 +174,10 @@ class TestCodeGenerator:
         assert "_type_map_" in src
 
     def test_import_uses_private_module(self):
+        # import_name == module_name when constructed directly (no pyi stem)
+        # so import_name="mymod" → "import mymod" (no underscore added)
         src = CodeGenerator(self._make_group(mod="mymod")).generate()
-        assert "import _mymod" in src
+        assert "import mymod" in src
 
     def test_slots_present(self):
         src = CodeGenerator(self._make_group()).generate()
@@ -414,7 +416,7 @@ class TestCLI:
         _run_cli(stub_pyi, "-o", out, "--module-name", "custom_engine")
 
         content = out.read_text(encoding="utf-8")
-        assert "import _custom_engine" in content
+        assert "import custom_engine" in content
         assert "import _myengine" not in content
 
     # ------------------------------------------------------------------
