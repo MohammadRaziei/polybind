@@ -63,10 +63,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install wheel
-        run: pip install --upgrade --find-links ./dist/ pip-size
+        run: pip install --upgrade --find-links ./dist/ polybind
 
-      - name: test pip-size installation 
-        run: pip-size "liburlparser" --json --quiet
+      - name: test polybind installation 
+        run: python -m polybind tests/data/_my_module.pyi --dry-run
 
       # - name: Checkout repository
       #   uses: actions/checkout@v3
