@@ -153,9 +153,10 @@ class CLI:
         print(f"{'─' * 52}")
         for g in sorted(groups, key=lambda x: x.base_name):
             print(f"\n  class {g.base_name}")
-            for v in sorted(g.variants, key=lambda x: x.type_suffix):
+            for v in sorted(g.variants, key=lambda x: x.suffix_key):
                 dunders = f"  [{', '.join(v.dunder_methods)}]" if v.dunder_methods else ""
-                print(f"    {v.raw_name:<30} →  {v.py_type}{dunders}")
+                py = "/".join(v.py_types)
+                print(f"    {v.raw_name:<34} →  {py}{dunders}")
         print(f"\n{'─' * 52}\n")
 
     # ------------------------------------------------------------------

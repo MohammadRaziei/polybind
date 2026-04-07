@@ -1,72 +1,50 @@
-"""Pure-Python stand-in for a compiled _my_module C extension."""
-
+"""Pure-Python stand-in for _my_module C extension."""
 from __future__ import annotations
 
-
-class _Box_int32:
-    """A box holding a 32-bit integer value."""
+class _Box__int32:
+    """A box holding a 32-bit integer."""
     def __init__(self, val: int) -> None:
-        if not isinstance(val, int):
-            raise TypeError(f"expected int, got {type(val).__name__}")
-        self._val = val
-
-    def value(self) -> int:
-        """Return the stored integer value."""
-        return self._val
-
+        self._val = int(val)
+    def value(self) -> int: return self._val
     @staticmethod
-    def zero() -> "_Box_int32":
-        """Return a _Box_int32 initialised to zero."""
-        return _Box_int32(0)
+    def zero() -> "_Box__int32": return _Box__int32(0)
+    def __add__(self, other): return _Box__int32(self._val + other._val)
+    def __eq__(self, other): return isinstance(other, _Box__int32) and self._val == other._val
+    def __repr__(self): return f"_Box__int32({self._val!r})"
 
-    def __add__(self, other: "_Box_int32") -> "_Box_int32":
-        return _Box_int32(self._val + other._val)
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, _Box_int32) and self._val == other._val
-
-    def __repr__(self) -> str:
-        return f"_Box_int32({self._val!r})"
-
-
-class _Box_float64:
-    """A box holding a 64-bit float value."""
+class _Box__float64:
+    """A box holding a 64-bit float."""
     def __init__(self, val: float) -> None:
         self._val = float(val)
-
-    def value(self) -> float:
-        """Return the stored float value."""
-        return self._val
-
+    def value(self) -> float: return self._val
     @classmethod
-    def from_string(cls, s: str) -> "_Box_float64":
-        """Parse a float from string."""
-        return cls(float(s))
+    def from_string(cls, s: str) -> "_Box__float64": return cls(float(s))
+    def __mul__(self, other): return _Box__float64(self._val * other._val)
+    def __repr__(self): return f"_Box__float64({self._val!r})"
 
-    def __mul__(self, other: "_Box_float64") -> "_Box_float64":
-        return _Box_float64(self._val * other._val)
-
-    def __repr__(self) -> str:
-        return f"_Box_float64({self._val!r})"
-
-
-class _Box_str_:
-    """A box holding a string value."""
+class _Box__str_:
+    """A box holding a string."""
     def __init__(self, val: str) -> None:
-        self._val = val
+        self._val = str(val)
+    def value(self) -> str: return self._val
+    def __len__(self): return len(self._val)
+    def __repr__(self): return f"_Box__str_({self._val!r})"
 
-    def value(self) -> str:
-        """Return the stored string value."""
-        return self._val
+class _Pair__float64__int32:
+    """A pair of (float64, int32) values."""
+    def __init__(self, first: float, second: int) -> None:
+        self._first = float(first); self._second = int(second)
+    def first(self) -> float: return self._first
+    def second(self) -> int: return self._second
+    def __repr__(self): return f"_Pair__float64__int32({self._first!r}, {self._second!r})"
 
-    def __len__(self) -> int:
-        return len(self._val)
-
-    def __repr__(self) -> str:
-        return f"_Box_str_({self._val!r})"
-
+class _Pair__int32__int64:
+    """A pair of (int32, int64) values."""
+    def __init__(self, first: int, second: int) -> None:
+        self._first = int(first); self._second = int(second)
+    def first(self) -> int: return self._first
+    def second(self) -> int: return self._second
+    def __repr__(self): return f"_Pair__int32__int64({self._first!r}, {self._second!r})"
 
 class Renderer:
-    """Non-template class — exists only to verify polybind ignores it."""
-    def render(self) -> None:
-        pass
+    def render(self): pass

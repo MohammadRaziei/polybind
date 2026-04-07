@@ -4,8 +4,15 @@ polybind.core
 Parses .pyi stub files and generates unified Python wrapper classes
 for C++ template types exposed via nanobind / pybind11 / Cython.
 
-Naming convention  : ClassName_nptype   (numpy-style: int32, float64, …)
-Leading underscore : _ClassName_nptype  → grouped under  ClassName
+Naming convention:
+    [_]BaseName__T1[__T2[__T3...]]
+
+Examples:
+    _Box__float32          →  Box<float32>
+    _Box__float32__int32   →  Box<float32, int32>
+    Transform__int32__bool_→  Transform<int32, bool_>
+
+The number of __ -separated type suffixes determines the template arity.
 """
 
 from __future__ import annotations
@@ -21,21 +28,18 @@ from pathlib import Path
 # Numpy-style scalar type registry
 # ---------------------------------------------------------------------------
 
-#: Maps numpy-style suffix → Python built-in type name (as string).
-#: This dict is also emitted verbatim into the generated file as _NUMPY_TYPE_MAP.
+#: Maps numpy-style suffix → Python built-in type name (string).
+#: Emitted verbatim as _NUMPY_TYPE_MAP in generated files.
 NUMPY_TYPE_MAP: dict[str, str] = {
-    "int8":    "int",   "int16":   "int",   "int32":  "int",   "int64":  "int",
-    "uint8":   "int",   "uint16":  "int",   "uint32": "int",   "uint64": "int",
+    "int8":    "int",   "int16":  "int",   "int32":  "int",   "int64":  "int",
+    "uint8":   "int",   "uint16": "int",   "uint32": "int",   "uint64": "int",
     "float32": "float", "float64": "float",
-    "bool_":   "bool",  "str_":    "str",   "bytes_": "bytes",
-    "int":     "int",   "float":   "float", "bool":   "bool",  "str":    "str",
+    "bool_":   "bool",  "str_":   "str",   "bytes_": "bytes",
+    "int":     "int",   "float":  "float", "bool":   "bool",  "str":    "str",
 }
 
-# Single-line repr of NUMPY_TYPE_MAP for embedding in generated files.
 _NUMPY_TYPE_MAP_REPR = (
-    "{"
-    + ", ".join(f'"{k}": {v}' for k, v in NUMPY_TYPE_MAP.items())
-    + "}"
+    "{" + ", ".join(f'"{k}": {v}' for k, v in NUMPY_TYPE_MAP.items()) + "}"
 )
 
 
@@ -50,18 +54,33 @@ class MethodInfo:
     args: list[tuple[str, str | None]]   # [(arg_name, annotation_or_None), …]
     return_annotation: str | None
     docstring: str | None
-    decorators: list[str] = field(default_factory=list)  # e.g. ["staticmethod"]
+    decorators: list[str] = field(default_factory=list)
 
 
 @dataclass
 class CppVariant:
-    """One concrete C++ specialisation, e.g. _Box_int32 or Box_float64."""
-    raw_name: str
-    base_name: str
-    type_suffix: str
-    py_type: str
+    """One concrete C++ specialisation.
+
+    e.g.  _Box__float32__int32  →  base="Box", suffixes=["float32","int32"]
+    """
+    raw_name: str               # exactly as found in the .pyi
+    base_name: str              # e.g. "Box"
+    suffixes: list[str]         # e.g. ["float32", "int32"]  (ordered)
+    py_types: list[str]         # e.g. ["float", "int"]       (parallel)
+    # arg_name → suffix index:  which constructor arg corresponds to which T
+    # e.g. {"val": 0, "idx": 1}  — may have fewer entries than suffixes
+    ctor_arg_to_suffix: dict[str, int] = field(default_factory=dict)
     docstring: str | None = None
     methods: list[MethodInfo] = field(default_factory=list)
+
+    @property
+    def arity(self) -> int:
+        return len(self.suffixes)
+
+    @property
+    def suffix_key(self) -> tuple[str, ...]:
+        """The map key for this variant: tuple of suffixes."""
+        return tuple(self.suffixes)
 
     @property
     def dunder_methods(self) -> list[str]:
@@ -73,8 +92,8 @@ class CppVariant:
 class WrapperGroup:
     """All variants that share the same base_name → one unified wrapper."""
     base_name: str
-    module_name: str        # stem with leading _ stripped  (used for attr names)
-    import_name: str = ""   # exact stem as-is from the file (used in import stmt)
+    module_name: str        # stem with leading _ stripped  (attr names)
+    import_name: str = ""   # exact stem as-is from file    (import stmt)
     variants: list[CppVariant] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -82,27 +101,38 @@ class WrapperGroup:
             self.import_name = self.module_name
 
     @property
-    def by_py_type(self) -> dict[str, CppVariant]:
-        result: dict[str, CppVariant] = {}
-        for v in self.variants:
-            result[v.py_type] = v
-        return result
+    def arity(self) -> int:
+        """Template arity (number of type params). All variants share this."""
+        return self.variants[0].arity if self.variants else 0
 
     @property
     def map_attr_name(self) -> str:
-        """e.g. Box → _type_map_box"""
+        """e.g.  Box → _type_map_box"""
         return f"_type_map_{self.base_name.lower()}"
+
+    @property
+    def all_ctor_arg_names(self) -> list[str]:
+        """Union of constructor arg names across all variants (minus 'self')."""
+        seen: dict[str, None] = {}
+        for v in self.variants:
+            for name, _ in v.ctor_arg_to_suffix.items():
+                seen[name] = None
+        return list(seen)
+
+    @property
+    def suffix_key_to_variant(self) -> dict[tuple[str, ...], CppVariant]:
+        return {v.suffix_key: v for v in self.variants}
 
 
 # ---------------------------------------------------------------------------
 # Parser
 # ---------------------------------------------------------------------------
 
+# New pattern: optional leading _, base name, then one or more __suffix groups
 _VARIANT_RE = re.compile(
-    r"^_?(?P<base>[A-Za-z][A-Za-z0-9]*)_(?P<suffix>[A-Za-z0-9_]+)$"
+    r"^_?(?P<base>[A-Za-z][A-Za-z0-9]*)(?P<parts>(?:__[A-Za-z0-9_]+)+)$"
 )
 
-# Decorators we recognise and reproduce in generated code.
 _KNOWN_DECORATORS = {"staticmethod", "classmethod", "property",
                      "abstractmethod", "overload"}
 
@@ -112,9 +142,7 @@ class StubParser:
 
     def __init__(self, pyi_path: Path, module_name: str | None = None) -> None:
         self.pyi_path    = pyi_path
-        # import_name: exact stem of the file, used verbatim in `import` statements
         self.import_name = module_name or pyi_path.stem
-        # module_name: leading underscores stripped, used for attr/map naming
         self.module_name = module_name or pyi_path.stem.lstrip("_")
         self._tree: ast.Module | None = None
 
@@ -135,28 +163,79 @@ class StubParser:
             m = _VARIANT_RE.match(name)
             if m is None:
                 continue
-            base   = m.group("base")
-            suffix = m.group("suffix")
-            if suffix not in NUMPY_TYPE_MAP:
+
+            base     = m.group("base")
+            # split __float32__int32 → ["float32", "int32"]
+            suffixes = [s for s in m.group("parts").split("__") if s]
+
+            # all suffixes must be in NUMPY_TYPE_MAP
+            if not all(s in NUMPY_TYPE_MAP for s in suffixes):
                 continue
 
+            py_types = [NUMPY_TYPE_MAP[s] for s in suffixes]
+            methods  = self._extract_methods(classdef)
+            ctor_map = self._infer_ctor_arg_map(classdef, suffixes, py_types)
+
             variant = CppVariant(
-                raw_name    = name,
-                base_name   = base,
-                type_suffix = suffix,
-                py_type     = NUMPY_TYPE_MAP[suffix],
-                docstring   = self._extract_docstring(classdef),
-                methods     = self._extract_methods(classdef),
+                raw_name           = name,
+                base_name          = base,
+                suffixes           = suffixes,
+                py_types           = py_types,
+                ctor_arg_to_suffix = ctor_map,
+                docstring          = self._extract_docstring(classdef),
+                methods            = methods,
             )
+
             if base not in groups:
                 groups[base] = WrapperGroup(
-                    base_name=base,
-                    module_name=self.module_name,
-                    import_name=self.import_name,
+                    base_name   = base,
+                    module_name = self.module_name,
+                    import_name = self.import_name,
                 )
             groups[base].variants.append(variant)
 
         return list(groups.values())
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _infer_ctor_arg_map(
+        classdef: ast.ClassDef,
+        suffixes: list[str],
+        py_types: list[str],
+    ) -> dict[str, int]:
+        """
+        Infer which constructor argument corresponds to which template type.
+
+        Strategy: walk the __init__ args (skip 'self'), match each argument's
+        Python type annotation against py_types in order.
+
+        Returns {arg_name: suffix_index}.
+        """
+        init_node = next(
+            (n for n in classdef.body
+             if isinstance(n, ast.FunctionDef) and n.name == "__init__"),
+            None,
+        )
+        if init_node is None:
+            return {}
+
+        result: dict[str, int] = {}
+        suffix_used = [False] * len(suffixes)
+
+        for arg in init_node.args.args:
+            if arg.arg == "self":
+                continue
+            ann = StubParser._ann_to_str(arg.annotation)
+            if ann is None:
+                continue
+            # try to match annotation to an unused py_type
+            for i, (pt, used) in enumerate(zip(py_types, suffix_used)):
+                if not used and ann == pt:
+                    result[arg.arg] = i
+                    suffix_used[i] = True
+                    break
+
+        return result
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -191,13 +270,8 @@ class StubParser:
     # ------------------------------------------------------------------
     @staticmethod
     def _parse_decorators(func: ast.FunctionDef) -> list[str]:
-        """Return decorator names we know how to reproduce."""
-        result = []
-        for dec in func.decorator_list:
-            name = ast.unparse(dec)
-            if name in _KNOWN_DECORATORS:
-                result.append(name)
-        return result
+        return [ast.unparse(d) for d in func.decorator_list
+                if ast.unparse(d) in _KNOWN_DECORATORS]
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -240,14 +314,13 @@ class StubParser:
 # Helpers
 # ---------------------------------------------------------------------------
 
-# Matches any raw C++ variant class name in docstrings / annotations.
 _VARIANT_NAME_RE = re.compile(
-    r"\b_?[A-Za-z][A-Za-z0-9]*_(?:int|uint|float|bool|str|bytes)\w*\b"
+    r"\b_?[A-Za-z][A-Za-z0-9]*(?:__[A-Za-z0-9_]+)+\b"
 )
 
 
 def _rewrite_names(text: str, wrapper_name: str) -> str:
-    """Replace every variant-looking name in *text* with *wrapper_name*."""
+    """Replace every variant-looking name in text with wrapper_name."""
     if not text:
         return text
     return _VARIANT_NAME_RE.sub(wrapper_name, text)
@@ -306,18 +379,36 @@ class CodeGenerator:
 
     # ------------------------------------------------------------------
     def generate(self) -> str:
-        g            = self.group
-        mod          = g.module_name
-        base         = g.base_name
-        map_attr     = g.map_attr_name
-        py_types     = list(g.by_py_type.keys())
-        union_type   = self._union_annotation(py_types)
-        all_suffixes = sorted({v.type_suffix for v in g.variants})
-        suffixes_repr = ", ".join(f"'{s}'" for s in all_suffixes)
+        g        = self.group
+        mod      = g.module_name
+        base     = g.base_name
+        map_attr = g.map_attr_name
+        arity    = g.arity
+
+        # Collect all unique suffix-tuples
+        all_keys     = sorted(g.suffix_key_to_variant.keys())
+        all_suffixes = sorted({s for v in g.variants for s in v.suffixes})
+
+        # ctor arg names that map to template positions
+        ctor_args = g.all_ctor_arg_names   # e.g. ["val", "idx"]
+
+        # Build union annotation for each template position
+        # pos_unions[i] = Union of all py_types at position i
+        pos_unions: list[str] = []
+        for i in range(arity):
+            pts = list(dict.fromkeys(
+                v.py_types[i] for v in g.variants if i < len(v.py_types)
+            ))
+            pos_unions.append(self._union_annotation(pts))
+
+        # Full signature union: all distinct py_type combos
+        full_union = self._union_annotation(
+            list(dict.fromkeys(pt for v in g.variants for pt in v.py_types))
+        )
 
         L: list[str] = []
 
-        # ── module-level imports & _NUMPY_TYPE_MAP ─────────────────────
+        # ── imports ────────────────────────────────────────────────────
         L += [
             "import typing",
             f"import {g.import_name}",
@@ -330,26 +421,20 @@ class CodeGenerator:
             "    np = None  # type: ignore[assignment]",
             "    _NP_AVAILABLE = False",
             "",
-            # emitted once per file; subsequent classes reuse it
             f"_NUMPY_TYPE_MAP: typing.Dict[str, type] = {_NUMPY_TYPE_MAP_REPR}",
             "",
         ]
 
         # ── class docstring ────────────────────────────────────────────
-        # Collect docstrings from variant classes, deduplicate, rewrite names.
-        variant_docs: list[str] = []
-        seen_docs: set[str] = set()
-        for v in sorted(g.variants, key=lambda v: v.type_suffix):
-            if v.docstring:
-                cleaned = _rewrite_names(v.docstring.strip(), base)
-                if cleaned not in seen_docs:
-                    variant_docs.append(cleaned)
-                    seen_docs.add(cleaned)
-
         variant_list = ", ".join(
             f"``{v.raw_name}``"
-            for v in sorted(g.variants, key=lambda v: v.type_suffix)
+            for v in sorted(g.variants, key=lambda v: v.suffix_key)
         )
+        variant_docs = self._collect_variant_docs(g, base)
+        keys_repr = ", ".join(str(k) for k in all_keys)
+        suffixes_repr = ", ".join(f"'{s}'" for s in all_suffixes)
+
+        dtypes_doc = self._dtypes_doc(g, ctor_args)
 
         L += [f"class {base}(_ABC):"]
         L.append(f'    """Unified wrapper for :class:`{base}` template variants.')
@@ -357,52 +442,40 @@ class CodeGenerator:
         L.append(f"    Wraps: {variant_list}")
         if variant_docs:
             L.append(f"")
-            for doc_line in "\n\n".join(variant_docs).splitlines():
-                L.append(f"    {doc_line}" if doc_line else "")
+            for line in variant_docs.splitlines():
+                L.append(f"    {line}" if line.strip() else "")
         L += [
             f"",
             f"    Auto-generated by polybind.",
             f"",
+            f"    Template arity: {arity}",
+            f"    Valid dtype key-tuples: {keys_repr}",
+            f"",
             f"    Args:",
-            f"        val: Input value. Accepted Python types: ``{union_type}``.",
-            f"        dtype: Optional numpy-style dtype string (e.g. ``'float64'``).",
-            f"               Accepted values: {suffixes_repr}.",
-            f"               When given, overrides automatic type inference.",
-            f"               ``np.dtype`` objects are also accepted if numpy is installed.",
-            f'    """',
-            f"",
-            f"    __slots__ = ('_impl',)",
-            f"",
         ]
+        for line in dtypes_doc.splitlines():
+            L.append(f"        {line}")
+        L += [f'    """', f"", f"    __slots__ = ('_impl',)", f""]
 
-        # ── _type_map_xxx  (single class-variable declaration) ─────────
-        # Values reference the already-imported _mod directly.
-        imp = g.import_name  # exact name used in the import statement
+        # ── _type_map_xxx  key=(suffix_tuple) → C++ class ──────────────
         map_items = ", ".join(
-            f"{py_type}: {imp}.{variant.raw_name}"
-            for py_type, variant in g.by_py_type.items()
+            f"{v.suffix_key!r}: {g.import_name}.{v.raw_name}"
+            for v in sorted(g.variants, key=lambda v: v.suffix_key)
         )
         L += [
-            f"    #: Maps Python built-in type → concrete C++ variant class.",
-            f"    {map_attr}: typing.ClassVar[typing.Dict[type, type]]"
+            f"    #: Maps tuple-of-suffixes → concrete C++ variant class.",
+            f"    {map_attr}: typing.ClassVar[typing.Dict[tuple, type]]"
             f" = {{{map_items}}}",
             f"",
         ]
 
         # ── __new__ ────────────────────────────────────────────────────
-        L += self._new_method(base, map_attr, union_type, all_suffixes)
+        L += self._new_method(g, ctor_args, pos_unions, all_keys, full_union)
         L.append("")
 
         # ── __init__ ───────────────────────────────────────────────────
-        L += [
-            f"    def __init__(",
-            f"        self,",
-            f"        val: {union_type},",
-            f"        dtype: typing.Optional[str] = None,",
-            f"    ) -> None:",
-            f"        pass  # __new__ handles construction",
-            f"",
-        ]
+        L += self._init_signature(g, ctor_args, pos_unions, full_union)
+        L.append("")
 
         # ── public methods ─────────────────────────────────────────────
         public_methods = self._collect_public_methods(g)
@@ -421,10 +494,9 @@ class CodeGenerator:
             L.append("    # -- delegated dunder methods --")
         for dunder in needed_dunders:
             minfo = self._find_method_info(g, dunder)
-            L += self._dunder_stub(dunder, minfo, base)
+            L += self._dunder_stub(dunder, minfo, base, g)
             L.append("")
 
-        # ── __repr__ fallback ──────────────────────────────────────────
         if "__repr__" not in needed_dunders:
             L += [
                 "    def __repr__(self) -> str:",
@@ -436,13 +508,16 @@ class CodeGenerator:
         # ── __class_getitem__ ──────────────────────────────────────────
         L += [
             "    @classmethod",
-            f"    def __class_getitem__(cls, item: type) -> type:",
-            f'        """Return the C++ variant class for the given Python type.',
+            f"    def __class_getitem__(cls, item: typing.Union[str, tuple]) -> type:",
+            f'        """Return the C++ variant class for a suffix or suffix-tuple.',
             f"",
-            f"        Example::",
+            f"        Examples::",
             f"",
-            f"            {base}[int]   # → the underlying C++ int variant",
+            f"            {base}['float32']             # single-type variant",
+            f"            {base}[('float32', 'int32')]  # multi-type variant",
             f'        """',
+            f"        if isinstance(item, str):",
+            f"            item = (item,)",
             f"        return cls.{map_attr}.get(item, cls)",
             "",
         ]
@@ -459,50 +534,185 @@ class CodeGenerator:
     # ------------------------------------------------------------------
     def _new_method(
         self,
-        base: str,
-        map_attr: str,
-        union_type: str,
-        all_suffixes: list[str],
+        g: WrapperGroup,
+        ctor_args: list[str],
+        pos_unions: list[str],
+        all_keys: list[tuple[str, ...]],
+        full_union: str,
     ) -> list[str]:
-        suffixes_repr = ", ".join(f"'{s}'" for s in all_suffixes)
-        return [
-            f"    def __new__(",
-            f"        cls,",
-            f"        val: {union_type},",
-            f"        dtype: typing.Optional[str] = None,",
+        base        = g.base_name
+        map_attr    = g.map_attr_name
+        arity       = g.arity
+        keys_repr   = ", ".join(str(k) for k in all_keys)
+        n_ctor_args = len(ctor_args)
+        args_joined = ", ".join(ctor_args)
+
+        params = ["        cls,"]
+        for i, arg in enumerate(ctor_args):
+            ann = pos_unions[i] if i < len(pos_unions) else "object"
+            params.append(f"        {arg}: {ann},")
+        extra_needed = arity - n_ctor_args
+        for i in range(extra_needed):
+            params.append(f"        _t{i}: object = None,  # extra template arg (no ctor mapping)")
+        params.append(
+            "        dtypes: typing.Optional["
+            "typing.Union[typing.List[str], typing.Dict[str, str]]] = None,"
+        )
+
+        L: list[str] = []
+        L.append(f"    def __new__(")
+        L.extend(params)
+        L += [
             f"    ) -> '{base}':",
-            f'        """Construct a {base} instance wrapping the correct C++ variant.',
+            f'        """Construct a {base} instance.',
             f"",
-            f"        Selects the variant via ``type(val)`` unless ``dtype`` is given.",
-            f"        Accepted dtype strings: {suffixes_repr}.",
+            f"        Resolves the correct C++ variant from *dtypes* or by",
+            f"        inferring types from the supplied arguments.",
+            f"",
+            f"        Valid dtype key-tuples: {keys_repr}",
             f'        """',
-            f"        if dtype is not None:",
-            f"            if _NP_AVAILABLE and isinstance(dtype, np.dtype):  # type: ignore[union-attr]",
-            f"                dtype = dtype.name",
-            f"            cpp_cls = _NUMPY_TYPE_MAP.get(dtype)",
-            f"            if cpp_cls is None or cpp_cls not in cls.{map_attr}.values():",
-            f"                # fall back: look up by exact suffix in the class map",
-            f"                cpp_cls = next(",
-            f"                    (v for k, v in cls.{map_attr}.items()",
-            f"                     if getattr(v, '__name__', '').endswith('_' + dtype)),",
-            f"                    None,",
-            f"                )",
-            f"            if cpp_cls is None:",
-            f"                raise TypeError(",
-            f"                    f\"{{cls.__name__}}: unknown dtype '{{dtype}}'."
-            f" Valid: {suffixes_repr}\"",
-            f"                )",
+            f"        # ── resolve suffix key ────────────────────────────────",
+            f"        _key: typing.Optional[tuple] = None",
+            f"        if dtypes is None or (isinstance(dtypes, dict) and not dtypes):",
+        ]
+
+        if n_ctor_args >= arity:
+            # Can auto-detect from argument types
+            L += [
+                f"            # auto-detect: find variant whose py_types match argument types",
+                f"            _arg_pytypes = tuple(type(a).__name__ for a in [{args_joined}][:{arity}])",
+                f"            for _k in cls.{map_attr}:",
+                f"                _k_pytypes = tuple(getattr(_NUMPY_TYPE_MAP.get(s, s), '__name__', str(_NUMPY_TYPE_MAP.get(s, s))) for s in _k)",
+                f"                if _k_pytypes == _arg_pytypes:",
+                f"                    _key = _k",
+                f"                    break",
+                f"            if _key is None:",
+                f"                raise TypeError(",
+                f"                    f\"{{cls.__name__}}: cannot auto-detect variant for \"",
+                f"                    f\"argument types {{_arg_pytypes}}. \"",
+                f"                    f\"Valid: {keys_repr}\"",
+                f"                )",
+            ]
+        else:
+            # Not enough ctor args — dtypes list required
+            L += [
+                f"            raise TypeError(",
+                f"                f\"{{cls.__name__}} has {arity} template type(s) but only "
+                f"{n_ctor_args} constructor arg(s). \"",
+                f"                \"Pass dtypes as a list: dtypes=['T1', ...']\"",
+                f"            )",
+            ]
+
+        # Build representative ctor_arg_to_suffix across all variants
+        all_maps: dict[str, int] = {}
+        for v in g.variants:
+            for arg, idx in v.ctor_arg_to_suffix.items():
+                if arg not in all_maps:
+                    all_maps[arg] = idx
+
+        L += [
+            f"        elif isinstance(dtypes, list):",
+            f"            _norm: list[str] = []",
+            f"            for _d in dtypes:",
+            f"                if _NP_AVAILABLE and isinstance(_d, np.dtype):  # type: ignore",
+            f"                    _d = _d.name",
+            f"                _norm.append(str(_d))",
+            f"            _key = tuple(_norm)",
+            f"        elif isinstance(dtypes, dict):",
+            f"            _parts: list[str] = [''] * {arity}",
+        ]
+        for arg, idx in all_maps.items():
+            if idx < arity:
+                L.append(
+                    f"            if '{arg}' in dtypes: _parts[{idx}] = dtypes['{arg}']"
+                )
+        for arg, idx in all_maps.items():
+            if idx < arity:
+                L.append(
+                    f"            if not _parts[{idx}]: _parts[{idx}] = next("
+                    f"(s for s, t in _NUMPY_TYPE_MAP.items() if t == type({arg}).__name__), "
+                    f"type({arg}).__name__)"
+                )
+        L += [
+            f"            _key = tuple(_parts)",
             f"        else:",
-            f"            cpp_cls = cls.{map_attr}.get(type(val))",
-            f"            if cpp_cls is None:",
-            f"                raise TypeError(",
-            f"                    f\"{{cls.__name__}} does not support"
-            f" type '{{type(val).__name__}}'\"",
-            f"                )",
+            f"            raise TypeError(f\"dtypes must be None, list, or dict — got {{type(dtypes).__name__}}\")",
+            f"",
+            f"        cpp_cls = cls.{map_attr}.get(_key)",
+            f"        if cpp_cls is None:",
+            f"            raise TypeError(",
+            f"                f\"{{cls.__name__}}: no variant for key {{_key}}. \"",
+            f"                f\"Valid: {keys_repr}\"",
+            f"            )",
             f"        obj = object.__new__(cls)",
-            f"        object.__setattr__(obj, '_impl', cpp_cls(val))",
+            f"        object.__setattr__(obj, '_impl', cpp_cls(*[{args_joined}]))",
             f"        return obj",
         ]
+        return L
+
+
+    # ------------------------------------------------------------------
+    def _init_signature(
+        self,
+        g: WrapperGroup,
+        ctor_args: list[str],
+        pos_unions: list[str],
+        full_union: str,
+    ) -> list[str]:
+        L = ["    def __init__(", "        self,"]
+        for i, arg in enumerate(ctor_args):
+            ann = pos_unions[i] if i < len(pos_unions) else "object"
+            L.append(f"        {arg}: {ann},")
+        L += [
+            "        dtypes: typing.Optional["
+            "typing.Union[typing.List[str], typing.Dict[str, str]]] = None,",
+            "    ) -> None:",
+            "        pass  # __new__ handles construction",
+        ]
+        return L
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _dtypes_doc(g: WrapperGroup, ctor_args: list[str]) -> str:
+        arity       = g.arity
+        n_ctor_args = len(ctor_args)
+        lines = []
+        for i, arg in enumerate(ctor_args):
+            union = CodeGenerator._union_annotation(
+                list(dict.fromkeys(
+                    v.py_types[i] for v in g.variants if i < len(v.py_types)
+                ))
+            )
+            lines.append(f"{arg}: {union}")
+        lines.append(
+            "dtypes: None | list[str] | dict[str,str] — controls variant selection."
+        )
+        lines.append(
+            "  None / {} → auto-detect from argument types"
+            + (" (all positions inferrable)" if n_ctor_args >= arity
+               else " — NOT possible here, dtypes list required")
+        )
+        lines.append("  list  → ['float32','int32'] in suffix order")
+        lines.append("  dict  → {'val':'float32'} partial, rest auto-detected")
+        if n_ctor_args < arity:
+            lines.append(
+                f"  NOTE: {arity} template types but only {n_ctor_args} ctor arg(s) "
+                "→ dtypes list is REQUIRED."
+            )
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _collect_variant_docs(g: WrapperGroup, base: str) -> str:
+        seen: set[str] = set()
+        parts: list[str] = []
+        for v in sorted(g.variants, key=lambda v: v.suffix_key):
+            if v.docstring:
+                cleaned = _rewrite_names(v.docstring.strip(), base)
+                if cleaned not in seen:
+                    parts.append(cleaned)
+                    seen.add(cleaned)
+        return "\n\n".join(parts)
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -533,35 +743,30 @@ class CodeGenerator:
         base: str,
         g: WrapperGroup,
     ) -> list[str]:
-        """Generate a typed delegation stub for a public (non-dunder) method."""
         lines: list[str] = []
-
-        # decorators
         for dec in minfo.decorators:
             lines.append(f"    @{dec}")
-
         sig_parts = self._build_sig_parts(minfo, base)
         ret       = self._rewrite_return_ann(minfo.return_annotation, g)
         ret_ann   = f" -> {ret}" if ret else ""
         lines.append(f"    def {minfo.name}({', '.join(sig_parts)}){ret_ann}:")
-
         if minfo.docstring:
-            doc = _rewrite_names(minfo.docstring, base)
-            lines.append(f'        """{doc}"""')
+            lines.append(f'        """{_rewrite_names(minfo.docstring, base)}"""')
 
-        # body — skip 'self'/'cls' from call args
         skip = {"self", "cls"}
         call_args = ", ".join(
             a[0].lstrip("*") for a in minfo.args if a[0] not in skip
         )
         if "staticmethod" in minfo.decorators:
-            # staticmethod has no cls — reference the wrapper class by name directly.
-            lines.append(f"        _first = next(iter({base}.{g.map_attr_name}.values()))")
-            lines.append(f"        return _first.{minfo.name}({call_args})")
+            # staticmethod has no cls — use the class name directly
+            lines.append(f"        for _scls in {base}.{g.map_attr_name}.values():")
+            lines.append(f"            if hasattr(_scls, '{minfo.name}'):")
+            lines.append(f"                _raw = _scls.{minfo.name}({call_args})")
+            lines.append(f"                _obj = object.__new__({base})")
+            lines.append(f"                object.__setattr__(_obj, '_impl', _raw)")
+            lines.append(f"                return _obj")
+            lines.append(f"        raise AttributeError('{base}' + ' has no staticmethod {minfo.name}')")
         elif "classmethod" in minfo.decorators:
-            # classmethod: try each variant class until one has the method.
-            # Wrap the result in the unified wrapper so the caller gets a Box,
-            # not a raw C++ object.
             lines.append(f"        for _cls in cls.{g.map_attr_name}.values():")
             lines.append(f"            if hasattr(_cls, '{minfo.name}'):")
             lines.append(f"                _raw = _cls.{minfo.name}({call_args})")
@@ -573,7 +778,6 @@ class CodeGenerator:
             lines.append(f"        return self._impl.{minfo.name}")
         else:
             lines.append(f"        return self._impl.{minfo.name}({call_args})")
-
         return lines
 
     # ------------------------------------------------------------------
@@ -582,9 +786,8 @@ class CodeGenerator:
         name: str,
         minfo: MethodInfo | None,
         base: str,
+        g: WrapperGroup,
     ) -> list[str]:
-        g = self.group
-
         _SIGS: dict[str, tuple[str, str, str]] = {
             "__len__":      ("self",                              "int",             "return len(self._impl)"),
             "__bool__":     ("self",                              "bool",            "return bool(self._impl)"),
@@ -613,20 +816,20 @@ class CodeGenerator:
             "__copy__":     ("self",                              "object",          "return self._impl.__copy__()"),
             "__deepcopy__": ("self, memo: dict",                  "object",          "return self._impl.__deepcopy__(memo)"),
         }
-
         if name in _SIGS:
             params, ret_type, body = _SIGS[name]
         elif name in _BIN_OPS:
-            other_ann = self._union_annotation([f"'{base}'"] + list(g.by_py_type.keys()))
+            all_py = list(dict.fromkeys(pt for v in g.variants for pt in v.py_types))
+            other_ann = self._union_annotation([f"'{base}'"] + all_py)
             params    = f"self, other: {other_ann}"
             ret_type  = "object"
-            body      = f"return self._impl.{name}(other._impl if isinstance(other, {base}) else other)"
+            body      = (f"return self._impl.{name}"
+                         f"(other._impl if isinstance(other, {base}) else other)")
         else:
             params, ret_type = "self, *args: object, **kwargs: object", "object"
             body = f"return self._impl.{name}(*args, **kwargs)"
 
-        # prefer .pyi signature when richer
-        if minfo is not None and len(minfo.args) > 1:
+        if minfo and len(minfo.args) > 1:
             params   = ", ".join(self._build_sig_parts(minfo, base))
             ret_type = self._rewrite_return_ann(minfo.return_annotation, g) or ret_type
 
@@ -636,21 +839,22 @@ class CodeGenerator:
                 lines.append(f"    @{dec}")
         lines.append(f"    def {name}({params}) -> {ret_type}:")
         if minfo and minfo.docstring:
-            doc = _rewrite_names(minfo.docstring, base)
-            lines.append(f'        """{doc}"""')
+            lines.append(f'        """{_rewrite_names(minfo.docstring, base)}"""')
         lines.append(f"        {body}")
         return lines
 
     # ------------------------------------------------------------------
     @staticmethod
     def _build_sig_parts(minfo: MethodInfo, base: str) -> list[str]:
+        _re = re.compile(
+            r"_?[A-Za-z][A-Za-z0-9]*(?:__[A-Za-z0-9_]+)+"
+        )
         parts = []
         for arg_name, ann in minfo.args:
             if ann is None:
                 parts.append(arg_name)
             else:
-                clean = _rewrite_names(ann, base)
-                parts.append(f"{arg_name}: {clean}")
+                parts.append(f"{arg_name}: {_re.sub(base, ann)}")
         return parts
 
     # ------------------------------------------------------------------
@@ -697,8 +901,8 @@ class PolybindGenerator:
         if not groups:
             raise ValueError(
                 f"No template variants found in '{self.pyi_path}'. "
-                "Make sure class names follow the ClassName_nptype convention "
-                "(e.g. Box_int32, Matrix_float64)."
+                "Make sure class names follow the BaseName__T1[__T2] convention "
+                "(e.g. Box__int32, Matrix__float64__int32)."
             )
 
         header = textwrap.dedent(f"""\

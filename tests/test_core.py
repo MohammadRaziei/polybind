@@ -2,7 +2,7 @@
 tests/test_core.py
 ~~~~~~~~~~~~~~~~~~
 Unit tests for polybind.core — no C extension required.
-We test the parser and code generator against synthetic .pyi content.
+Naming convention: BaseName__T1[__T2...]  (double underscore separator)
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import pytest
 
 from polybind.core import (
     CodeGenerator,
+    MethodInfo,
     PolybindGenerator,
     StubParser,
     WrapperGroup,
@@ -34,6 +35,26 @@ def make_pyi(tmp_path: Path, content: str, name: str = "_mymod.pyi") -> Path:
     return p
 
 
+def make_variant(raw: str, base: str, suffixes: list[str]) -> CppVariant:
+    """Convenience: build a CppVariant with minimal fields."""
+    return CppVariant(
+        raw_name=raw,
+        base_name=base,
+        suffixes=suffixes,
+        py_types=[NUMPY_TYPE_MAP[s] for s in suffixes],
+    )
+
+
+def make_group(base: str = "Box", mod: str = "mymod",
+               variants: list[CppVariant] | None = None) -> WrapperGroup:
+    g = WrapperGroup(base_name=base, module_name=mod, import_name=mod)
+    g.variants = variants or [
+        make_variant("Box__int32",   "Box", ["int32"]),
+        make_variant("Box__float64", "Box", ["float64"]),
+    ]
+    return g
+
+
 # ---------------------------------------------------------------------------
 # StubParser
 # ---------------------------------------------------------------------------
@@ -42,9 +63,9 @@ class TestStubParser:
 
     def test_detects_basic_variants(self, tmp_path):
         pyi = make_pyi(tmp_path, """\
-            class Box_int32:
+            class Box__int32:
                 def __init__(self, val: int) -> None: ...
-            class Box_float64:
+            class Box__float64:
                 def __init__(self, val: float) -> None: ...
         """)
         groups = StubParser(pyi).parse()
@@ -52,24 +73,24 @@ class TestStubParser:
         assert len(groups) == 1
         group = groups[0]
         assert group.base_name == "Box"
-        suffixes = {v.type_suffix for v in group.variants}
-        assert suffixes == {"int32", "float64"}
+        all_suffixes = {s for v in group.variants for s in v.suffixes}
+        assert all_suffixes == {"int32", "float64"}
 
     def test_strips_leading_underscore(self, tmp_path):
         pyi = make_pyi(tmp_path, """\
-            class _Box_int32:
+            class _Box__int32:
                 def __init__(self, val: int) -> None: ...
         """)
         groups = StubParser(pyi).parse()
         assert len(groups) == 1
         assert groups[0].base_name == "Box"
-        assert groups[0].variants[0].raw_name == "_Box_int32"
+        assert groups[0].variants[0].raw_name == "_Box__int32"
 
     def test_ignores_non_template_classes(self, tmp_path):
         pyi = make_pyi(tmp_path, """\
             class Renderer:
                 pass
-            class Box_int32:
+            class Box__int32:
                 def __init__(self, val: int) -> None: ...
         """)
         groups = StubParser(pyi).parse()
@@ -79,7 +100,7 @@ class TestStubParser:
 
     def test_ignores_unknown_suffix(self, tmp_path):
         pyi = make_pyi(tmp_path, """\
-            class Box_foobar:
+            class Box__foobar:
                 pass
         """)
         groups = StubParser(pyi).parse()
@@ -87,31 +108,55 @@ class TestStubParser:
 
     def test_multiple_base_names(self, tmp_path):
         pyi = make_pyi(tmp_path, """\
-            class Box_int32:
+            class Box__int32:
                 def __init__(self, val: int) -> None: ...
-            class Matrix_float64:
+            class Matrix__float64:
                 def __init__(self, val: float) -> None: ...
         """)
         groups = StubParser(pyi).parse()
         base_names = {g.base_name for g in groups}
         assert base_names == {"Box", "Matrix"}
 
+    def test_multi_type_variant(self, tmp_path):
+        """Two-type variant Box__float64__int32."""
+        pyi = make_pyi(tmp_path, """\
+            class _Pair__float64__int32:
+                def __init__(self, first: float, second: int) -> None: ...
+        """)
+        groups = StubParser(pyi).parse()
+        assert len(groups) == 1
+        v = groups[0].variants[0]
+        assert v.suffixes == ["float64", "int32"]
+        assert v.py_types == ["float", "int"]
+        assert v.arity == 2
+
     def test_extracts_dunders(self, tmp_path):
         pyi = make_pyi(tmp_path, """\
-            class Box_int32:
+            class Box__int32:
                 def __init__(self, val: int) -> None: ...
-                def __add__(self, other: Box_int32) -> Box_int32: ...
+                def __add__(self, other: Box__int32) -> Box__int32: ...
                 def __repr__(self) -> str: ...
         """)
         groups = StubParser(pyi).parse()
         dunders = set(groups[0].variants[0].dunder_methods)
         assert "__add__" in dunders
         assert "__repr__" in dunders
-        assert "__init__" not in dunders  # excluded
+        assert "__init__" not in dunders
+
+    def test_infers_ctor_arg_map(self, tmp_path):
+        """Parser infers which ctor arg maps to which template position."""
+        pyi = make_pyi(tmp_path, """\
+            class _Pair__float64__int32:
+                def __init__(self, first: float, second: int) -> None: ...
+        """)
+        groups = StubParser(pyi).parse()
+        m = groups[0].variants[0].ctor_arg_to_suffix
+        assert m.get("first") == 0   # float → T1
+        assert m.get("second") == 1  # int   → T2
 
     def test_module_name_strips_underscore(self, tmp_path):
         pyi = make_pyi(tmp_path, """\
-            class Box_int32:
+            class Box__int32:
                 def __init__(self, val: int) -> None: ...
         """, name="_novasvg.pyi")
         groups = StubParser(pyi).parse()
@@ -119,7 +164,7 @@ class TestStubParser:
 
     def test_module_name_override(self, tmp_path):
         pyi = make_pyi(tmp_path, """\
-            class Box_int32:
+            class Box__int32:
                 def __init__(self, val: int) -> None: ...
         """)
         groups = StubParser(pyi, module_name="custom").parse()
@@ -127,28 +172,37 @@ class TestStubParser:
 
 
 # ---------------------------------------------------------------------------
-# WrapperGroup.by_py_type
+# WrapperGroup
 # ---------------------------------------------------------------------------
 
 class TestWrapperGroup:
 
-    def test_by_py_type_last_wins(self):
-        g = WrapperGroup(base_name="Box", module_name="mod")
-        g.variants = [
-            CppVariant("Box_int32", "Box", "int32", "int"),
-            CppVariant("Box_int64", "Box", "int64", "int"),  # both map to int
-        ]
-        # last one wins
-        assert g.by_py_type["int"].type_suffix == "int64"
+    def test_suffix_key_to_variant(self):
+        g = make_group()
+        assert ("int32",)   in g.suffix_key_to_variant
+        assert ("float64",) in g.suffix_key_to_variant
 
-    def test_by_py_type_multiple_types(self):
-        g = WrapperGroup(base_name="Box", module_name="mod")
+    def test_map_attr_name(self):
+        g = make_group(base="Box")
+        assert g.map_attr_name == "_type_map_box"
+
+    def test_arity_single(self):
+        g = make_group()
+        assert g.arity == 1
+
+    def test_arity_multi(self):
+        g = make_group(base="Pair")
         g.variants = [
-            CppVariant("Box_int32",   "Box", "int32",   "int"),
-            CppVariant("Box_float64", "Box", "float64", "float"),
-            CppVariant("Box_str_",    "Box", "str_",    "str"),
+            make_variant("Pair__float64__int32", "Pair", ["float64", "int32"]),
         ]
-        assert set(g.by_py_type.keys()) == {"int", "float", "str"}
+        assert g.arity == 2
+
+    def test_all_ctor_arg_names(self):
+        g = make_group(base="Pair")
+        v = make_variant("Pair__float64__int32", "Pair", ["float64", "int32"])
+        v.ctor_arg_to_suffix = {"first": 0, "second": 1}
+        g.variants = [v]
+        assert set(g.all_ctor_arg_names) == {"first", "second"}
 
 
 # ---------------------------------------------------------------------------
@@ -157,36 +211,33 @@ class TestWrapperGroup:
 
 class TestCodeGenerator:
 
-    def _make_group(self, base="Box", mod="mymod", variants=None) -> WrapperGroup:
-        g = WrapperGroup(base_name=base, module_name=mod)
-        g.variants = variants or [
-            CppVariant("Box_int32",   "Box", "int32",   "int"),
-            CppVariant("Box_float64", "Box", "float64", "float"),
-        ]
-        return g
-
     def test_class_definition_present(self):
-        src = CodeGenerator(self._make_group()).generate()
+        src = CodeGenerator(make_group()).generate()
         assert "class Box(_ABC):" in src
 
     def test_type_map_present(self):
-        src = CodeGenerator(self._make_group()).generate()
+        src = CodeGenerator(make_group()).generate()
         assert "_type_map_" in src
 
-    def test_import_uses_private_module(self):
-        # import_name == module_name when constructed directly (no pyi stem)
-        # so import_name="mymod" → "import mymod" (no underscore added)
-        src = CodeGenerator(self._make_group(mod="mymod")).generate()
+    def test_suffix_key_in_map(self):
+        src = CodeGenerator(make_group()).generate()
+        assert "('int32',)" in src
+        assert "('float64',)" in src
+
+    def test_import_uses_module_name(self):
+        src = CodeGenerator(make_group(mod="mymod")).generate()
         assert "import mymod" in src
 
     def test_slots_present(self):
-        src = CodeGenerator(self._make_group()).generate()
+        src = CodeGenerator(make_group()).generate()
         assert "__slots__" in src
 
+    def test_dtypes_param_present(self):
+        src = CodeGenerator(make_group()).generate()
+        assert "dtypes" in src
+
     def test_dunder_stubs_generated(self):
-        from polybind.core import MethodInfo
-        g = self._make_group()
-        # dunder_methods is a computed property — inject via methods list
+        g = make_group()
         g.variants[0].methods = [
             MethodInfo(name="__add__",  args=[("self", None), ("other", None)],
                        return_annotation=None, docstring=None),
@@ -198,8 +249,19 @@ class TestCodeGenerator:
         assert "def __repr__" in src
 
     def test_class_getitem_present(self):
-        src = CodeGenerator(self._make_group()).generate()
+        src = CodeGenerator(make_group()).generate()
         assert "__class_getitem__" in src
+
+    def test_multi_type_map_keys(self):
+        """Multi-type variant produces tuple keys in the map."""
+        g = make_group(base="Pair")
+        g.variants = [
+            make_variant("Pair__float64__int32", "Pair", ["float64", "int32"]),
+            make_variant("Pair__int32__int64",   "Pair", ["int32",   "int64"]),
+        ]
+        src = CodeGenerator(g).generate()
+        assert "('float64', 'int32')" in src
+        assert "('int32', 'int64')" in src
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +278,7 @@ class TestPolybindGenerator:
 
     def test_generates_and_writes_file(self, tmp_path):
         pyi = make_pyi(tmp_path, """\
-            class Box_int32:
+            class Box__int32:
                 def __init__(self, val: int) -> None: ...
         """)
         out = tmp_path / "box.py"
@@ -229,7 +291,7 @@ class TestPolybindGenerator:
 
     def test_header_contains_source_filename(self, tmp_path):
         pyi = make_pyi(tmp_path, """\
-            class _Box_int32:
+            class _Box__int32:
                 def __init__(self, val: int) -> None: ...
         """, name="_novasvg.pyi")
         gen = PolybindGenerator(pyi)
@@ -238,20 +300,13 @@ class TestPolybindGenerator:
 
 
 # ---------------------------------------------------------------------------
-# CLI  (subprocess — uses the installed entry-point or python -m polybind)
+# CLI  (subprocess)
 # ---------------------------------------------------------------------------
 
-# Absolute path to the polybind package so the subprocess finds it even when
-# the package is not installed into the active environment.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess:
-    """
-    Invoke  python -m polybind <args>  as a real subprocess.
-    PYTHONPATH is set to the repo root so polybind is importable by absolute
-    path regardless of whether it has been pip-installed.
-    """
     env = {
         **__import__("os").environ,
         "PYTHONPATH": str(_REPO_ROOT),
@@ -264,18 +319,18 @@ def _run_cli(*args: str) -> subprocess.CompletedProcess:
     )
 
 
-# Realistic stub that a nanobind/pybind11 stubgen might produce.
+# Fixture uses new __ naming convention
 _FIXTURE_PYI = """\
-class _Tensor_int32:
+class _Tensor__int32:
     def __init__(self, val: int) -> None: ...
-    def __add__(self, other: _Tensor_int32) -> _Tensor_int32: ...
+    def __add__(self, other: _Tensor__int32) -> _Tensor__int32: ...
     def __repr__(self) -> str: ...
 
-class _Tensor_float64:
+class _Tensor__float64:
     def __init__(self, val: float) -> None: ...
-    def __mul__(self, other: _Tensor_float64) -> _Tensor_float64: ...
+    def __mul__(self, other: _Tensor__float64) -> _Tensor__float64: ...
 
-class _Tensor_bool_:
+class _Tensor__bool_:
     def __init__(self, val: bool) -> None: ...
     def __bool__(self) -> bool: ...
 
@@ -287,155 +342,101 @@ class Renderer:
 
 class TestCLI:
 
-    # ------------------------------------------------------------------
-    # Fixtures
-    # ------------------------------------------------------------------
-
     @pytest.fixture()
     def stub_pyi(self, tmp_path: Path) -> Path:
-        """Write the fixture .pyi to a real temp file and return its absolute path."""
         pyi = tmp_path / "_myengine.pyi"
         pyi.write_text(textwrap.dedent(_FIXTURE_PYI), encoding="utf-8")
-        return pyi.resolve()   # ← absolute path
-
-    # ------------------------------------------------------------------
-    # Happy-path
-    # ------------------------------------------------------------------
+        return pyi.resolve()
 
     def test_basic_run_exit_zero(self, stub_pyi, tmp_path):
-        """CLI exits 0 and creates the output file."""
         out = (tmp_path / "myengine.py").resolve()
         result = _run_cli(stub_pyi, "-o", out)
-
         assert result.returncode == 0, (
             f"CLI exited {result.returncode}\n"
-            f"stdout: {result.stdout}\n"
-            f"stderr: {result.stderr}"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
         )
-        assert out.exists(), "Output file was not created"
+        assert out.exists()
 
     def test_default_output_path(self, stub_pyi, tmp_path):
-        """Without -o, output is written as <stem-without-underscore>.py next to input."""
         result = _run_cli(stub_pyi)
-
         assert result.returncode == 0, result.stderr
         expected = stub_pyi.parent / "myengine.py"
         assert expected.exists(), f"Expected default output at {expected}"
 
     def test_output_contains_class_definitions(self, stub_pyi, tmp_path):
-        """Generated file must contain a class for every discovered base name."""
         out = tmp_path / "myengine.py"
         _run_cli(stub_pyi, "-o", out)
-
         content = out.read_text(encoding="utf-8")
         assert "class Tensor(_ABC):" in content
 
     def test_output_contains_type_map(self, stub_pyi, tmp_path):
-        """_TYPE_MAP_VAL must be present and reference the C++ classes."""
         out = tmp_path / "myengine.py"
         _run_cli(stub_pyi, "-o", out)
-
         content = out.read_text(encoding="utf-8")
-        assert "_type_map_" in content   # attr name is _type_map_<classname_lower>
-        # all three raw variant names must appear
-        assert "_Tensor_int32" in content
-        assert "_Tensor_float64" in content
-        assert "_Tensor_bool_" in content
+        assert "_type_map_" in content
+        assert "_Tensor__int32"   in content
+        assert "_Tensor__float64" in content
+        assert "_Tensor__bool_"   in content
 
     def test_output_header_mentions_source_file(self, stub_pyi, tmp_path):
-        """The auto-generated header must name the source .pyi."""
         out = tmp_path / "myengine.py"
         _run_cli(stub_pyi, "-o", out)
-
         content = out.read_text(encoding="utf-8")
         assert "_myengine.pyi" in content
 
     def test_non_template_class_not_in_output(self, stub_pyi, tmp_path):
-        """Renderer has no numpy suffix — must not appear as a wrapper class."""
         out = tmp_path / "myengine.py"
         _run_cli(stub_pyi, "-o", out)
-
         content = out.read_text(encoding="utf-8")
-        # 'Renderer' may appear in a comment but not as a class definition
         assert "class Renderer:" not in content
 
     def test_dunder_stubs_in_output(self, stub_pyi, tmp_path):
-        """Dunder methods present in the stub must be delegated in the wrapper."""
         out = tmp_path / "myengine.py"
         _run_cli(stub_pyi, "-o", out)
-
         content = out.read_text(encoding="utf-8")
         assert "def __add__" in content
         assert "def __mul__" in content
         assert "def __bool__" in content
 
-    # ------------------------------------------------------------------
-    # --dry-run
-    # ------------------------------------------------------------------
-
     def test_dry_run_prints_to_stdout(self, stub_pyi, tmp_path):
-        """--dry-run must print source to stdout and not write any file."""
         out = tmp_path / "should_not_exist.py"
         result = _run_cli(stub_pyi, "-o", out, "--dry-run")
-
         assert result.returncode == 0, result.stderr
         assert "class Tensor(_ABC):" in result.stdout
-        assert not out.exists(), "--dry-run must not write a file"
+        assert not out.exists()
 
     def test_dry_run_stdout_is_valid_python(self, stub_pyi):
-        """The dry-run output must be parseable Python source."""
         import ast as _ast
         result = _run_cli(stub_pyi, "--dry-run")
-
         assert result.returncode == 0, result.stderr
         try:
             _ast.parse(result.stdout)
         except SyntaxError as exc:
             pytest.fail(f"dry-run output is not valid Python: {exc}\n{result.stdout}")
 
-    # ------------------------------------------------------------------
-    # --verbose
-    # ------------------------------------------------------------------
-
     def test_verbose_mentions_variants(self, stub_pyi, tmp_path):
-        """--verbose output must list the discovered variant names."""
         out = tmp_path / "myengine.py"
         result = _run_cli(stub_pyi, "-o", out, "--verbose")
-
         assert result.returncode == 0, result.stderr
         combined = result.stdout + result.stderr
         assert "Tensor" in combined
 
-    # ------------------------------------------------------------------
-    # --module-name override
-    # ------------------------------------------------------------------
-
     def test_module_name_override_in_output(self, stub_pyi, tmp_path):
-        """--module-name must replace the import target in generated code."""
         out = tmp_path / "myengine.py"
         _run_cli(stub_pyi, "-o", out, "--module-name", "custom_engine")
-
         content = out.read_text(encoding="utf-8")
         assert "import custom_engine" in content
         assert "import _myengine" not in content
 
-    # ------------------------------------------------------------------
-    # Error cases
-    # ------------------------------------------------------------------
-
     def test_missing_input_file_exits_nonzero(self, tmp_path):
-        """Passing a nonexistent .pyi must exit with a non-zero code."""
         missing = (tmp_path / "ghost.pyi").resolve()
         result = _run_cli(missing)
-
         assert result.returncode != 0
-        assert "not found" in result.stderr.lower() or "error" in result.stderr.lower()
+        assert "error" in result.stderr.lower()
 
     def test_stub_with_no_variants_exits_nonzero(self, tmp_path):
-        """A .pyi with no recognised template classes must exit non-zero."""
         pyi = tmp_path / "_empty.pyi"
         pyi.write_text("class Renderer: pass\n", encoding="utf-8")
         result = _run_cli(pyi.resolve())
-
         assert result.returncode != 0
         assert "error" in result.stderr.lower()
