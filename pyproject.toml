@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Auto-generate unified Python wrappers for C++ template types (nanobind / pybind11 / Cython)"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.10"
+requires-python = ">=3.7"
 authors = [
     { name = "Mohammad Raziei", email = "mohammadraziei@gmail.com" },
 ]
