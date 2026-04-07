@@ -279,13 +279,8 @@ README.md
 
 ---
 
-## Running tests
-
-```bash
-pip install -e ".[dev]"
-pytest
-pytest --cov=polybind --cov-report=term-missing
-```
+## Limitations
+- Templates with non-numeric types (e.g., custom structs) require manual handling
 
 ---
 
