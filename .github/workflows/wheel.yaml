@@ -68,14 +68,14 @@ jobs:
       - name: test polybind installation 
         run: polybind -h
 
-      # - name: Checkout repository
-      #   uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-      # - name: Install test dependencies
-      #   run: pip install pytest-cov pytest-xdist pytest-asyncio
+      - name: Install test dependencies
+        run: pip install pytest-cov pytest-xdist pytest-asyncio
 
-      # - name: Run tests
-      #   run: python -m pytest -v 
+      - name: Run tests
+        run: python -m pytest -v 
 
 
   release:
