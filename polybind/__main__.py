@@ -6,6 +6,8 @@ CLI for generating unified Python wrappers from C++ stub files.
 Usage:
     python -m polybind input.pyi [options]
     polybind input.pyi [options]
+    polybind version [...]          show, change and tag the project version
+    polybind config                 show the effective settings (.polybind / pyproject)
 """
 
 from __future__ import annotations
@@ -173,7 +175,16 @@ import textwrap  # needed by _build_parser epilog
 
 
 def main(args: list[str] | None = None) -> None:
-    sys.exit(CLI(args).run())
+    argv = sys.argv[1:] if args is None else list(args)
+    if argv and argv[0] == "version":
+        from polybind.version import main as version_main
+
+        sys.exit(version_main(argv[1:]))
+    if argv and argv[0] == "config":
+        from polybind.config import main as config_main
+
+        sys.exit(config_main(argv[1:]))
+    sys.exit(CLI(argv).run())
 
 
 if __name__ == "__main__":

@@ -279,11 +279,44 @@ README.md
 
 ---
 
-## Limitations
-- Templates with non-numeric types (e.g., custom structs) require manual handling
+## Running tests
+
+```bash
+pip install -e ".[dev]"
+pytest
+pytest --cov=polybind --cov-report=term-missing
+```
 
 ---
 
 ## Author
 
 [Mohammad Raziei](https://github.com/mohammadraziei) — MIT License
+
+---
+
+## Project version and settings
+
+```bash
+polybind version                  # show X.Y.Z
+polybind version minor +          # minor += 1  (also: -, +N, -N, N)
+polybind version tag create minor # bump, commit the version file, tag vX.Y.Z
+polybind version check            # exit 1 if the version is not the latest git tag
+polybind config                   # show the effective settings
+```
+
+The version lives in a header with `#define <PREFIX>VERSION_MAJOR|MINOR|PATCH <N>` or in the
+static `version` of `pyproject.toml`; it is detected, or set explicitly.
+
+Settings go in `.polybind` (TOML) or `[tool.polybind]` of `pyproject.toml`; the command line wins
+over `.polybind`, which wins over pyproject:
+
+```toml
+[version]
+file = "include/httpp.h"
+prefix = "HTTPP_"
+tag_format = "v%s"
+```
+
+Reading TOML uses `tomllib` (Python 3.11+) or `tomli`, which is installed automatically on
+older Pythons.
