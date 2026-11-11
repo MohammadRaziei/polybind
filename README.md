@@ -295,7 +295,9 @@ pytest --cov=polybind --cov-report=term-missing
 
 ---
 
-## Project version and settings
+## Project version, settings and dependencies
+
+The design is in [`spec.md`](spec.md).
 
 ```bash
 polybind version                  # show X.Y.Z
@@ -303,20 +305,33 @@ polybind version minor +          # minor += 1  (also: -, +N, -N, N)
 polybind version tag create minor # bump, commit the version file, tag vX.Y.Z
 polybind version check            # exit 1 if the version is not the latest git tag
 polybind config                   # show the effective settings
+polybind deps validate            # check settings, dependencies and polybind.lock
+polybind deps list [--json]       # the dependencies with every default filled in
+polybind deps requirements --kind build|runtime|extra:<group>
 ```
 
 The version lives in a header with `#define <PREFIX>VERSION_MAJOR|MINOR|PATCH <N>` or in the
 static `version` of `pyproject.toml`; it is detected, or set explicitly.
 
-Settings go in `.polybind` (TOML) or `[tool.polybind]` of `pyproject.toml`; the command line wins
-over `.polybind`, which wins over pyproject:
+Settings go in `polybind.toml` or in `[tool.polybind]` of `pyproject.toml` (same keys); the command
+line wins over `polybind.toml`, which wins over pyproject:
 
 ```toml
+schema = 1
+
 [version]
-file = "include/httpp.h"
+file = "include/httpp/version.h"
 prefix = "HTTPP_"
-tag_format = "v%s"
+tag-format = "v%s"
+
+[deps.liburlparser]                 # a native library with a CMake package; every key is optional
+version-spec = ">=2.2.0,<3"
+targets      = ["liburlparser::urlparser"]
+python.cmake-flag = "--cmake-dir"   # a python.* table turns the pip/uv provider on
+fetch.url    = "https://github.com/mohammadraziei/liburlparser.git"   # fetch.url turns the git provider on
 ```
+
+`polybind.lock` is a separate file, written only by `polybind deps record` (not implemented yet).
 
 Reading TOML uses `tomllib` (Python 3.11+) or `tomli`, which is installed automatically on
 older Pythons.

@@ -6,16 +6,19 @@ Project settings for polybind, read from TOML.
 Two places, same keys, merged in this order (later wins)::
 
     pyproject.toml   [tool.polybind] ...
-    .polybind        top level, no "tool.polybind" prefix
+    polybind.toml    top level, no "tool.polybind" prefix
 
-The command line wins over both. Example ``.polybind``::
+The command line wins over both. Example ``polybind.toml``::
+
+    schema = 1
 
     [version]
     file = "include/httpp.h"
     prefix = "HTTPP_"
-    tag_format = "v%s"
+    tag-format = "v%s"
 
-Sections: ``version`` (checked key by key), ``gen`` and ``deps`` (reserved, passed through).
+Top level: ``schema`` (``1``), and the sections ``version`` (checked key by key), ``gen``,
+``deps`` and ``optional-deps`` (checked by :mod:`polybind.deps`).
 
 TOML is read with ``tomllib`` (Python 3.11+) or its backport ``tomli`` (``pip install tomli``,
 installed automatically on older Pythons). A project that has no polybind settings never
@@ -32,14 +35,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-CONFIG_FILE = ".polybind"
+CONFIG_FILE = "polybind.toml"
 PYPROJECT_FILE = "pyproject.toml"
+SCHEMA_VERSION = 1
 
-# section -> allowed keys (None: not checked yet)
+# section -> allowed keys (None: checked elsewhere)
 SCHEMA: dict[str, set[str] | None] = {
-    "version": {"file", "prefix", "tag_format"},
+    "version": {"file", "prefix", "tag-format"},
     "gen": None,
     "deps": None,
+    "optional-deps": None,
 }
 
 
@@ -83,7 +88,8 @@ def deep_merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _unknown(kind: str, name: str, allowed: set[str], origin: str) -> ConfigError:
+def unknown_key(kind: str, name: str, allowed: set[str], origin: str) -> ConfigError:
+    """The error for a misspelled key, with the closest valid one."""
     hint = difflib.get_close_matches(name, sorted(allowed), n=1)
     more = f" (did you mean '{hint[0]}'?)" if hint else f" (known: {', '.join(sorted(allowed))})"
     return ConfigError(f"{origin}: unknown {kind} '{name}'{more}")
@@ -91,8 +97,12 @@ def _unknown(kind: str, name: str, allowed: set[str], origin: str) -> ConfigErro
 
 def validate(data: dict[str, Any], origin: str) -> None:
     for section, body in data.items():
+        if section == "schema":
+            if isinstance(body, bool) or body != SCHEMA_VERSION:
+                raise ConfigError(f"{origin}: schema must be {SCHEMA_VERSION}")
+            continue
         if section not in SCHEMA:
-            raise _unknown("section", section, set(SCHEMA), origin)
+            raise unknown_key("section", section, set(SCHEMA) | {"schema"}, origin)
         if not isinstance(body, dict):
             raise ConfigError(f"{origin}: [{section}] must be a table")
         allowed = SCHEMA[section]
@@ -100,7 +110,7 @@ def validate(data: dict[str, Any], origin: str) -> None:
             continue
         for key, value in body.items():
             if key not in allowed:
-                raise _unknown("key", f"{section}.{key}", {f"{section}.{k}" for k in allowed}, origin)
+                raise unknown_key("key", f"{section}.{key}", {f"{section}.{k}" for k in allowed}, origin)
             if not isinstance(value, str):
                 raise ConfigError(f"{origin}: {section}.{key} must be a string")
 
@@ -112,6 +122,10 @@ class Config:
 
     def get(self, section: str, key: str, default: Any = None) -> Any:
         return self.data.get(section, {}).get(key, default)
+
+    @property
+    def origin(self) -> str:
+        return " + ".join(p.name for p in self.sources) or "settings"
 
 
 def load_config(root: Path) -> Config:

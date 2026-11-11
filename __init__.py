@@ -14,9 +14,9 @@ Quickstart::
 """
 
 from polybind.core import (
+    NUMPY_TYPE_MAP,
     CodeGenerator,
     CppVariant,
-    NUMPY_TYPE_MAP,
     PolybindGenerator,
     StubParser,
     WrapperGroup,

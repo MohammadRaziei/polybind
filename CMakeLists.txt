@@ -7,7 +7,7 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 enable_testing()
 
 add_test(NAME ruff
-         COMMAND ${Python3_EXECUTABLE} -m ruff check polybind/version.py polybind/config.py tests/test_version.py tests/test_config.py
+         COMMAND ${Python3_EXECUTABLE} -m ruff check .
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_test(NAME pytest

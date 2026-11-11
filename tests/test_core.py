@@ -15,15 +15,14 @@ from pathlib import Path
 import pytest
 
 from polybind.core import (
+    NUMPY_TYPE_MAP,
     CodeGenerator,
+    CppVariant,
     MethodInfo,
     PolybindGenerator,
     StubParser,
     WrapperGroup,
-    CppVariant,
-    NUMPY_TYPE_MAP,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

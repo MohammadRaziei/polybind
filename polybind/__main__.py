@@ -7,13 +7,15 @@ Usage:
     python -m polybind input.pyi [options]
     polybind input.pyi [options]
     polybind version [...]          show, change and tag the project version
-    polybind config                 show the effective settings (.polybind / pyproject)
+    polybind config                 show the effective settings (polybind.toml / pyproject)
+    polybind deps [...]             validate, list and export the native dependencies
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+import textwrap
 from pathlib import Path
 
 
@@ -149,7 +151,6 @@ class CLI:
 
     # ------------------------------------------------------------------
     def _print_summary(self, groups: list, output_path: Path) -> None:
-        from polybind.core import WrapperGroup
         print(f"\n{'─' * 52}")
         print(f"  polybind  →  {output_path}")
         print(f"{'─' * 52}")
@@ -171,8 +172,6 @@ class CLI:
         print(f"polybind: warning: {msg}", file=sys.stderr)
 
 
-import textwrap  # needed by _build_parser epilog
-
 
 def main(args: list[str] | None = None) -> None:
     argv = sys.argv[1:] if args is None else list(args)
@@ -184,6 +183,10 @@ def main(args: list[str] | None = None) -> None:
         from polybind.config import main as config_main
 
         sys.exit(config_main(argv[1:]))
+    if argv and argv[0] == "deps":
+        from polybind.deps import main as deps_main
+
+        sys.exit(deps_main(argv[1:]))
     sys.exit(CLI(argv).run())
 
 

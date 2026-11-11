@@ -8,7 +8,7 @@ One source of truth per project, either
 * a C/C++ header with ``#define <PREFIX>VERSION_MAJOR|MINOR|PATCH <N>``, or
 * the static ``version = "X.Y.Z"`` of ``[project]`` in ``pyproject.toml``.
 
-Settings (``--file``, ``--prefix``, ``--tag-format``) can live in ``.polybind`` or
+Settings (``--file``, ``--prefix``, ``--tag-format``) can live in ``polybind.toml`` or
 ``[tool.polybind.version]`` of pyproject.toml; see :mod:`polybind.config`.
 
 Usage::
@@ -433,14 +433,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     args.root = args.root.resolve()
     try:
-        # command line > .polybind > [tool.polybind] in pyproject.toml > built-in default
+        # command line > polybind.toml > [tool.polybind] in pyproject.toml > built-in default
         config = load_config(args.root)
         file = args.file
         if file is None and config.get("version", "file"):
             file = Path(config.get("version", "file"))
         prefix = args.prefix if args.prefix is not None else config.get("version", "prefix")
         args.tag_format = (
-            args.tag_format or config.get("version", "tag_format") or DEFAULT_TAG_FORMAT
+            args.tag_format or config.get("version", "tag-format") or DEFAULT_TAG_FORMAT
         )
         source = detect_source(args.root, file, prefix)
         return int(args.func(args, source))
