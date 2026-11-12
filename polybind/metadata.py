@@ -6,7 +6,7 @@ A project turns it on with ``polybind`` in ``[build-system].requires`` and::
     dynamic = ["dependencies", "optional-dependencies"]   # the ones it should fill
 
     [[tool.dynamic-metadata]]
-    provider = "polybind"
+    provider = "polybind.metadata"
 
 scikit-build-core then asks the provider twice:
 

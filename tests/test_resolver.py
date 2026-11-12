@@ -67,7 +67,10 @@ def make_wheel(
     wheel = dest / f"{name}-{version}-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         for path, text in files.items():
-            archive.writestr(path, text)
+            info = zipfile.ZipInfo(path, date_time=(2020, 1, 1, 0, 0, 0))
+            if ".data/scripts/" in path:
+                info.external_attr = 0o100755 << 16  # like a real wheel: regular file, executable (pip --target needs both bits; uv sets +x itself)
+            archive.writestr(info, text)
     return wheel
 
 

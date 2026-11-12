@@ -31,7 +31,7 @@ dependencies, and the requirements of a project in one place. The design is in `
   --version`; a string or a list; `""` reads the package metadata; a first word other than `python` runs a console script
   of the package. A command that fails falls back to the package metadata.
 - **Build plugin for scikit-build-core**: a dynamic-metadata provider, so that with `polybind` in
-  `[build-system].requires` and `[[tool.dynamic-metadata]] provider = "polybind"`, the build requirements of
+  `[build-system].requires` and `[[tool.dynamic-metadata]] provider = "polybind.metadata"`, the build requirements of
   `polybind.toml` are installed into the isolated build environment and the runtime ones (and extras) go into the wheel
   metadata. See `spec.md` 7.2 and the README.
 - **Dynamic version**: with `dynamic = ["version"]` the version is read from the header, by the scikit-build-core provider

@@ -117,7 +117,7 @@ version = "0.1.0"
 dynamic = ["dependencies", "optional-dependencies"]
 
 [[tool.dynamic-metadata]]
-provider = "polybind"
+provider = "polybind.metadata"
 
 [tool.scikit-build]
 wheel.packages = ["demo"]

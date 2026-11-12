@@ -31,9 +31,9 @@ dependencies = [
 [project.scripts]
 polybind = "polybind.__main__:main"
 
-# scikit-build-core dynamic metadata (spec 7.2): `[[tool.dynamic-metadata]] provider = "polybind"`
+# scikit-build-core dynamic metadata (spec 7.2): `[[tool.dynamic-metadata]] provider = "polybind.metadata"`
 [project.entry-points."dynamic_metadata.provider"]
-polybind = "polybind.metadata:Provider"
+"polybind.metadata" = "polybind.metadata:Provider"
 
 # hatch version source (spec 4): `[tool.hatch.version] source = "polybind"`
 [project.entry-points.hatch]

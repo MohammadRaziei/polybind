@@ -351,7 +351,7 @@ build-backend = "scikit_build_core.build"
 dynamic = ["dependencies"]
 
 [[tool.dynamic-metadata]]
-provider = "polybind"
+provider = "polybind.metadata"
 
 [tool.scikit-build]
 sdist.include = ["polybind.toml"]

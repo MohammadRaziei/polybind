@@ -82,7 +82,7 @@ Rules: writing changes only the number, never comments or other tables; `tag cre
 
 `[project].dynamic = ["version"]` lets a build backend ask polybind for the version, so the header stays the only place it is written. The source is the one of section 4 with the same `[version]` settings (`file`, `prefix`), with one difference: it cannot be a `pyproject.toml`, because a dynamic version is not written there (that is an error, not a fallback).
 
-- scikit-build-core: the provider of 7.2 returns `version` when `"version"` is in `[project].dynamic` (`[[tool.dynamic-metadata]] provider = "polybind"`).
+- scikit-build-core: the provider of 7.2 returns `version` when `"version"` is in `[project].dynamic` (`[[tool.dynamic-metadata]] provider = "polybind.metadata"`).
 - hatch: `[tool.hatch.version] source = "polybind"` (entry point group `hatch`, `polybind/hatch_plugin.py`, imported only by hatch). `hatch version X.Y.Z` writes the header too.
 
 Measured: real isolated builds with pypa/build (pip installs polybind from a local wheel) with both backends give `demo-1.2.3`, for a header with `1.2.3`; hatch's own build and `set_version` are covered by `tests/test_metadata.py`. Linux only.
@@ -187,7 +187,7 @@ Not the same as `optional = true`: that is a CMake-level "may be absent", an ext
 
 ### 7.2 Plugin **[done]**, verified on scikit-build-core 1.1.2 and Linux only
 
-`polybind` in `[build-system].requires` is enough to get the requirements of `polybind.toml` into the build and into the wheel. It is a **dynamic-metadata provider** for scikit-build-core (`polybind/metadata.py`), registered by an entry point (`dynamic_metadata.provider`, name `polybind`), so the backend stays `scikit_build_core.build` and no PEP 517 backend of ours is needed:
+`polybind` in `[build-system].requires` is enough to get the requirements of `polybind.toml` into the build and into the wheel. It is a **dynamic-metadata provider** for scikit-build-core (`polybind/metadata.py`), registered by an entry point (`dynamic_metadata.provider`, named `polybind.metadata` like the providers of scikit-build-core itself), so the backend stays `scikit_build_core.build` and no PEP 517 backend of ours is needed:
 
 ```toml
 [build-system]
@@ -198,7 +198,7 @@ build-backend = "scikit_build_core.build"
 dynamic = ["dependencies"]            # and "optional-dependencies" when there are optional-deps groups
 
 [[tool.dynamic-metadata]]
-provider = "polybind"
+provider = "polybind.metadata"
 ```
 
 scikit-build-core asks the provider twice. `get_requires_for_dynamic_metadata` returns the `build` requirements of 7.1, and pip installs them into the isolated build environment before the build starts. `dynamic_metadata` returns `dependencies` (kind `runtime`) and `optional-dependencies` (one `extra:<group>` each), for the fields `[project].dynamic` lists. Static values in `[project]` are merged with them (PEP 808, add-only). A requirement with no declared field to go into is an error, never dropped silently. The entry takes no settings.
