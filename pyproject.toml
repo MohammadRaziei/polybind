@@ -35,6 +35,10 @@ polybind = "polybind.__main__:main"
 [project.entry-points."dynamic_metadata.provider"]
 polybind = "polybind.metadata:Provider"
 
+# hatch version source (spec 4): `[tool.hatch.version] source = "polybind"`
+[project.entry-points.hatch]
+polybind = "polybind.hatch_plugin"
+
 [project.urls]
 Homepage = "https://github.com/mohammadraziei/polybind"
 Issues   = "https://github.com/mohammadraziei/polybind/issues"

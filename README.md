@@ -333,6 +333,13 @@ python.cmake-flag = "--cmake-dir"   # a python.* table turns the pip/uv provider
 fetch.url    = "https://github.com/mohammadraziei/liburlparser.git"   # fetch.url turns the git provider on
 ```
 
+**Dynamic version.** With `dynamic = ["version"]` in `[project]`, the version is read from the header (the `[version]` settings are the same as for `polybind version`): scikit-build-core through the provider below, hatch with
+
+```toml
+[tool.hatch.version]
+source = "polybind"
+```
+
 Letting `pip install .` (and `python -m build`) take the requirements from these settings (scikit-build-core): put `polybind` in `[build-system].requires` and add the provider; the build requirements go into the isolated build environment and the runtime ones into the wheel metadata (details: spec.md 7.2).
 
 ```toml

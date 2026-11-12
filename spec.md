@@ -78,6 +78,15 @@ Commands: `polybind version [major|minor|patch [VALUE]]`, `tag`, `tag set`, `tag
 
 Rules: writing changes only the number, never comments or other tables; `tag create` refuses an existing tag and commits only the version file; `check` exits 1 when the version is not the latest tag; exit code 2 for a user error.
 
+### 4.1 Dynamic version **[done]**
+
+`[project].dynamic = ["version"]` lets a build backend ask polybind for the version, so the header stays the only place it is written. The source is the one of section 4 with the same `[version]` settings (`file`, `prefix`), with one difference: it cannot be a `pyproject.toml`, because a dynamic version is not written there (that is an error, not a fallback).
+
+- scikit-build-core: the provider of 7.2 returns `version` when `"version"` is in `[project].dynamic` (`[[tool.dynamic-metadata]] provider = "polybind"`).
+- hatch: `[tool.hatch.version] source = "polybind"` (entry point group `hatch`, `polybind/hatch_plugin.py`, imported only by hatch). `hatch version X.Y.Z` writes the header too.
+
+Measured: real isolated builds with pypa/build (pip installs polybind from a local wheel) with both backends give `demo-1.2.3`, for a header with `1.2.3`; hatch's own build and `set_version` are covered by `tests/test_metadata.py`. Linux only.
+
 ## 5. Dependencies: `[deps.<name>]` **[decided]** unless tagged
 
 A dependency is a native library with a CMake package, usually also a pip package. `<name>` matches `[A-Za-z0-9][A-Za-z0-9._-]*`.

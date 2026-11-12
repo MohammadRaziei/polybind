@@ -231,6 +231,27 @@ def detect_source(root: Path, file: Path | None = None, prefix: str | None = Non
     raise VersionError(f"no version source found in {root}; use --file")
 
 
+def project_source(root: Path) -> HeaderSource:
+    """The version source for a build backend that asks for a *dynamic* version (``[project].dynamic = ["version"]``).
+
+    The settings (``[version]``) are the same as for the command line. ``pyproject.toml`` cannot be the source here: a
+    dynamic version is by definition not written in it.
+    """
+    config = load_config(root)
+    name = config.get("version", "file")
+    source = detect_source(root, Path(name) if name else None, config.get("version", "prefix"))
+    if isinstance(source, PyprojectSource):
+        raise VersionError(
+            "the version is dynamic, so it cannot come from a pyproject.toml; "
+            "put it in a header (#define <PREFIX>VERSION_MAJOR/MINOR/PATCH) and set version.file if it is not found"
+        )
+    return source
+
+
+def project_version(root: Path) -> Version:
+    return project_source(root).read()
+
+
 # ---------------------------------------------------------------------------
 # Git
 # ---------------------------------------------------------------------------

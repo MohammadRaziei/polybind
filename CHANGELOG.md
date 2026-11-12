@@ -34,6 +34,9 @@ dependencies, and the requirements of a project in one place. The design is in `
   `[build-system].requires` and `[[tool.dynamic-metadata]] provider = "polybind"`, the build requirements of
   `polybind.toml` are installed into the isolated build environment and the runtime ones (and extras) go into the wheel
   metadata. See `spec.md` 7.2 and the README.
+- **Dynamic version**: with `dynamic = ["version"]` the version is read from the header, by the scikit-build-core provider
+  and by a hatch version source (`[tool.hatch.version] source = "polybind"`, `hatch version X.Y.Z` writes the header). A
+  `pyproject.toml` cannot be the source of a dynamic version.
 - Tests that run the real CMake, pip, uv and git, and a real scikit-build-core build (`tests/test_resolver.py`,
   `tests/test_metadata.py`).
 

@@ -12,8 +12,8 @@ scikit-build-core then asks the provider twice:
 
 * ``get_requires_for_dynamic_metadata``: the *build* requirements, which pip installs into the isolated build environment
   before the build starts;
-* ``dynamic_metadata``: the *runtime* requirements (``dependencies``) and the extras (``optional-dependencies``) that go
-  into the wheel metadata.
+* ``dynamic_metadata``: the *runtime* requirements (``dependencies``), the extras (``optional-dependencies``) and the
+  ``version`` (read from the header, see ``polybind.version``) that go into the wheel metadata.
 
 Why this cannot loop (the rules the code keeps):
 
@@ -34,6 +34,7 @@ from typing import Any
 
 from polybind.config import load_config
 from polybind.deps import load_dependencies, requirements
+from polybind.version import project_version
 
 _NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
@@ -88,6 +89,8 @@ class Provider:
             )
 
         fragment: dict[str, Any] = {}
+        if "version" in declared:
+            fragment["version"] = str(project_version(self.root or Path.cwd()))
         if "dependencies" in declared:
             fragment["dependencies"] = runtime
         if "optional-dependencies" in declared:
