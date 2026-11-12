@@ -333,6 +333,23 @@ python.cmake-flag = "--cmake-dir"   # a python.* table turns the pip/uv provider
 fetch.url    = "https://github.com/mohammadraziei/liburlparser.git"   # fetch.url turns the git provider on
 ```
 
+Letting `pip install .` (and `python -m build`) take the requirements from these settings (scikit-build-core): put `polybind` in `[build-system].requires` and add the provider; the build requirements go into the isolated build environment and the runtime ones into the wheel metadata (details: spec.md 7.2).
+
+```toml
+[build-system]
+requires = ["scikit-build-core", "polybind"]
+build-backend = "scikit_build_core.build"
+
+[project]
+dynamic = ["dependencies"]
+
+[[tool.dynamic-metadata]]
+provider = "polybind"
+
+[tool.scikit-build]
+sdist.include = ["polybind.toml"]
+```
+
 `polybind.lock` is a separate file, written only by `polybind deps record` (the `polybind_deps_record` target).
 
 Resolving the dependencies in a CMake project (Python is needed at configure time; the settings are TOML and are read by `python -m polybind`):

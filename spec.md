@@ -176,18 +176,39 @@ Not the same as `optional = true`: that is a CMake-level "may be absent", an ext
 
 `polybind deps requirements --kind build|runtime|extra:<group>` prints one PEP 508 requirement per line: `<python.package><version-spec>`, for every dependency with the python provider on and the matching flag set. A dependency without the python provider produces none.
 
-### 7.2 Plugin **[proposed]**, **[unverified]**
+### 7.2 Plugin **[done]**, verified on scikit-build-core 1.1.2 and Linux only
 
-Goal: write `polybind` in `[build-system].requires` and nothing else, as `hatch-requirements-txt` does for requirements files:
+`polybind` in `[build-system].requires` is enough to get the requirements of `polybind.toml` into the build and into the wheel. It is a **dynamic-metadata provider** for scikit-build-core (`polybind/metadata.py`), registered by an entry point (`dynamic_metadata.provider`, name `polybind`), so the backend stays `scikit_build_core.build` and no PEP 517 backend of ours is needed:
 
 ```toml
 [build-system]
-requires = ["scikit-build-core", "nanobind", "polybind"]
+requires = ["scikit-build-core", "polybind"]
+build-backend = "scikit_build_core.build"
+
+[project]
+dynamic = ["dependencies"]            # and "optional-dependencies" when there are optional-deps groups
+
+[[tool.dynamic-metadata]]
+provider = "polybind"
 ```
 
-Mechanism under study: a dynamic-metadata provider for scikit-build-core that fills `dependencies` (and `optional-dependencies`) from 7.1 and announces the build requirements through `get_requires_for_dynamic_metadata`. The scikit-build-core documentation calls this interface provisional, and it is not known whether the returned list reaches the isolated build environment. **An experiment decides** (milestone M4); fallbacks are `[tool.scikit-build] build.requires` (static) or a thin PEP 517 backend wrapping `scikit_build_core.build`.
+scikit-build-core asks the provider twice. `get_requires_for_dynamic_metadata` returns the `build` requirements of 7.1, and pip installs them into the isolated build environment before the build starts. `dynamic_metadata` returns `dependencies` (kind `runtime`) and `optional-dependencies` (one `extra:<group>` each), for the fields `[project].dynamic` lists. Static values in `[project]` are merged with them (PEP 808, add-only). A requirement with no declared field to go into is an error, never dropped silently. The entry takes no settings.
 
-polybind never runs `pip install` itself during the build: an isolated build environment may not contain pip.
+Measured (pip's isolated environment and `python -m build`, a project whose `polybind.toml` has a buildtime-only and a runtime dependency): both build requirements were installed into the build environment and importable by CMake; the wheel metadata has `Requires-Dist` for the runtime one only; the CMake resolver found both with `POLYBIND_DEPS_OFFLINE=ON`, so it had to install nothing; building a wheel from the sdist works the same, with `sdist.include = ["polybind.toml"]`.
+
+Why it cannot loop (the code keeps these rules):
+
+1. The provider only reads files in the project directory. It never runs pip, uv, cmake or a build, so nothing it does can start another build.
+2. It never lists `polybind` itself (the line in `[build-system].requires` is the only route to it).
+3. Its two answers come from the same files and do not depend on the environment or on each other, so asking twice, in another build state, or from an sdist gives the same lists.
+4. The CMake resolver runs after it: what the provider put into the build environment is found there first, and the resolver installs only what is missing and only when it is not offline.
+
+Notes:
+
+- The entry point exists only in an *installed* polybind. The release that contains the provider needs a new version number: with `0.1.0` unchanged, pip took the older `0.1.0` from PyPI, which has no provider, and the build failed with `Unknown dynamic-metadata provider 'polybind'`.
+- `polybind.toml` must be in the sdist (`sdist.include`), or keep everything in `[tool.polybind]`.
+- Not run: Windows, macOS, pip older than the one used, scikit-build-core older than 1.1.2 (`[[tool.dynamic-metadata]]` is its newer interface; the minimum version is not known). Groups selected at build time (section 6, option a) are not supported by the provider: it takes no settings.
+- The thin PEP 517 backend and `build.requires` fallbacks were not needed.
 
 ### 7.3 `polybind deps install` **[done]**
 
@@ -296,7 +317,7 @@ Tested with real CMake, pip, uv 0.11 and git on Linux; see `tests/test_resolver.
 | M1 | version and settings **[done]** |
 | M2 | **[done]** settings revision (`polybind.toml`, dashes, `schema`), dependency model and validation, lock reading and writing, `deps validate|list|requirements` |
 | M3 | CMake resolver with the python (uv, pip), fetch and system providers, `deps export`, `deps record`, `cmake-dir`; tests with local wheels and local git repositories **[done]** |
-| M4 | experiment, then the build plugin |
+| M4 | **[done]** the build plugin (7.2): a scikit-build-core dynamic-metadata provider, measured with pip and `python -m build` on Linux |
 | M5 | `bundle` |
 | M6 | `[[gen.stubs]]` for `gen` |
 

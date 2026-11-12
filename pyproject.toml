@@ -31,6 +31,10 @@ dependencies = [
 [project.scripts]
 polybind = "polybind.__main__:main"
 
+# scikit-build-core dynamic metadata (spec 7.2): `[[tool.dynamic-metadata]] provider = "polybind"`
+[project.entry-points."dynamic_metadata.provider"]
+polybind = "polybind.metadata:Provider"
+
 [project.urls]
 Homepage = "https://github.com/mohammadraziei/polybind"
 Issues   = "https://github.com/mohammadraziei/polybind/issues"
