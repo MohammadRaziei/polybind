@@ -8,7 +8,8 @@ Usage:
     polybind input.pyi [options]
     polybind version [...]          show, change and tag the project version
     polybind config                 show the effective settings (polybind.toml / pyproject)
-    polybind deps [...]             validate, list and export the native dependencies
+    polybind deps [...]             validate, list, export and record the native dependencies
+    polybind cmake-dir              the directory of PolybindDeps.cmake
 """
 
 from __future__ import annotations
@@ -183,6 +184,11 @@ def main(args: list[str] | None = None) -> None:
         from polybind.config import main as config_main
 
         sys.exit(config_main(argv[1:]))
+    if argv and argv[0] == "cmake-dir":
+        from polybind.deps import CMAKE_DIR
+
+        print(CMAKE_DIR)
+        sys.exit(0)
     if argv and argv[0] == "deps":
         from polybind.deps import main as deps_main
 

@@ -11,6 +11,11 @@ Usage::
     polybind deps requirements --kind build   PEP 508 requirements, one per line
                                --kind runtime
                                --kind extra:<group>
+    polybind deps install [--all] [--kind K] [-- INSTALLER-ARGS]
+                                              install requirements (pyproject.toml + [deps]) into an environment
+    polybind deps export                      JSON for the CMake resolver (dependencies + the lock)
+    polybind deps record --build-dir DIR      write polybind.lock from what a build resolved
+    polybind cmake-dir                        the directory of PolybindDeps.cmake
 
 The rules are in spec.md, sections 5 to 7 and 9.
 """
@@ -20,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import sys
 import textwrap
 from dataclasses import asdict, dataclass, field
@@ -31,20 +37,24 @@ from polybind.lock import (
     DEFAULT_TAG_FORMAT,
     LOCK_FILE,
     Lock,
+    LockEntry,
     read_lock,
     tag_to_version,
+    write_lock,
 )
 
 PROVIDERS = ("python", "uv", "pip", "fetch", "system")
+CMAKE_DIR = Path(__file__).resolve().parent / "cmake"
+BUILD_SUBDIR = "polybind-deps"  # <build dir>/polybind-deps/<name>.{provider,version,tag,commit}.txt, pin.txt
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-_SPEC_ITEM = re.compile(r"^(~=|==|!=|<=|>=|<|>)\s*[0-9][0-9A-Za-z.*+!_-]*$")
+_SPEC_ITEM = re.compile(r"^(~=|==|!=|<=|>=|<|>)\s*[0-9]+(\.[0-9]+)*$")
 
 DEP_KEYS = {
     "description", "version-spec", "targets", "find-package", "optional", "prefer-provider",
     "runtime", "buildtime", "bundle", "python", "fetch",
 }
-PYTHON_KEYS = {"package", "module", "module-cli", "cmake-flag", "version-flag", "cmake-function"}
+PYTHON_KEYS = {"package", "module", "module-cli", "cmake-flag", "version-command", "cmake-function"}
 FETCH_KEYS = {"url", "tag-format", "build-options"}
 
 
@@ -54,7 +64,9 @@ class PythonProvider:
     module: str
     module_cli: bool
     cmake_flag: list[str]
-    version_flag: str  # "" = read the version from the package metadata
+    # The command that prints the version; [] = read it from the package metadata. A first word of `python` stands for
+    # the interpreter the resolver found, any other first word is a console script of the package.
+    version_command: list[str]
     cmake_function: str  # "" unless module_cli is false
 
 
@@ -141,7 +153,24 @@ def _check_spec(spec: str, table: _Table) -> None:
         return
     for item in spec.split(","):
         if not _SPEC_ITEM.match(item.strip()):
-            raise table.error("version-spec", f"has an invalid item '{item.strip()}' (e.g. '>=2.2.0,<3')")
+            raise table.error("version-spec", f"has an invalid item '{item.strip()}' (an operator and a plain number, e.g. '>=2.2.0,<3')")
+
+
+def _version_command(t: _Table, module: str, module_cli: bool) -> list[str]:
+    """`python.version-command`: a string (split like a shell would) or a list; "" reads the package metadata."""
+    if not t.has("version-command"):
+        return ["python", "-m", module, "--version"] if module_cli else []
+    value = t.data["version-command"]
+    if isinstance(value, str):
+        try:
+            words = shlex.split(value)
+        except ValueError as exc:
+            raise t.error("version-command", f"is not a command ({exc})") from exc
+    elif isinstance(value, list) and value and all(isinstance(v, str) and v for v in value):
+        words = list(value)
+    else:
+        raise t.error("version-command", 'must be a command (a string or a list of non-empty strings), or "" for the package metadata')
+    return [word.replace("{module}", module) for word in words]
 
 
 def _parse_python(name: str, data: object, where: str, origin: str) -> PythonProvider:
@@ -156,12 +185,14 @@ def _parse_python(name: str, data: object, where: str, origin: str) -> PythonPro
         return PythonProvider(
             package, module, True,
             t.strings("cmake-flag", ["--cmake-dir"], single=True),
-            t.string("version-flag", "--version"), "",
+            _version_command(t, module, True), "",
         )
-    for key in ("cmake-flag", "version-flag"):
-        if t.has(key):
-            raise t.error(key, "needs module-cli = true (without a CLI there is nothing to pass it to)")
-    return PythonProvider(package, module, False, [], "", t.string("cmake-function", "get_cmake_dir", empty=False))
+    if t.has("cmake-flag"):
+        raise t.error("cmake-flag", "needs module-cli = true (without a CLI there is nothing to pass it to)")
+    return PythonProvider(
+        package, module, False, [], _version_command(t, module, False),
+        t.string("cmake-function", "get_cmake_dir", empty=False),
+    )
 
 
 def _parse_fetch(data: object, where: str, origin: str) -> FetchProvider:
@@ -355,8 +386,96 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 def cmd_requirements(args: argparse.Namespace) -> int:
     _, deps = _load(args.root)
-    for line in requirements(deps, args.kind, tuple(args.group or ())):
+    if args.with_pyproject:
+        from polybind.install import gather, read_project
+
+        lines = gather(read_project(args.root), deps, [args.kind])
+    else:
+        lines = requirements(deps, args.kind, tuple(args.group or ()))
+    for line in lines:
         print(line)
+    return 0
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    from polybind.install import DEFAULT_KINDS, install, read_project
+
+    _, deps = _load(args.root)
+    kinds = ["all"] if args.all else list(args.kind or DEFAULT_KINDS)
+    return install(
+        read_project(args.root), deps, kinds,
+        installer=args.installer, python=args.python, extra=list(args.installer_args), dry_run=args.dry_run,
+    )
+
+
+def export(deps: Dependencies, lock: Lock) -> dict[str, Any]:
+    """What the CMake resolver reads: the top level dependencies with defaults filled in, and their lock entry."""
+    out: dict[str, Any] = {}
+    for name, dep in deps.deps.items():
+        entry = asdict(dep)
+        del entry["name"], entry["group"]
+        locked = lock.entries.get(name)
+        entry["lock"] = None if locked is None else {
+            "tag": locked.tag,
+            "provider": locked.provider,
+            "commit": locked.commit or "",
+            "version": tag_to_version(locked.tag, dep.tag_format) or "",
+        }
+        out[name] = entry
+    return {"schema": 1, "dependencies": out}
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    _, deps = _load(args.root)
+    lock_path = args.root / LOCK_FILE
+    lock = read_lock(lock_path) if lock_path.is_file() else Lock()
+    for message in deps.warnings:
+        print(f"warning: {message}", file=sys.stderr)
+    warnings, errors = check_lock(deps, lock)
+    for message in warnings:
+        print(f"warning: {message}", file=sys.stderr)
+    if errors:
+        raise ConfigError("; ".join(errors))
+    print(json.dumps(export(deps, lock), indent=2))
+    return 0
+
+
+def _read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8").strip()
+
+
+def cmd_record(args: argparse.Namespace) -> int:
+    """Write polybind.lock from what the build resolved (<build dir>/polybind-deps/*.txt)."""
+    _, deps = _load(args.root)
+    build = args.build_dir / BUILD_SUBDIR
+    pin = build / "pin.txt"
+    if pin.is_file() and _read_text(pin).upper() in ("ON", "TRUE", "1"):
+        raise ConfigError(
+            "POLYBIND_DEPS_PIN is ON, so the build used the recorded versions and the lock is not updated. "
+            "Configure with -DPOLYBIND_DEPS_PIN=OFF, build, test, and record again."
+        )
+    lock_path = args.root / LOCK_FILE
+    lock = read_lock(lock_path) if lock_path.is_file() else Lock()
+    entries = dict(lock.entries)
+    for name in deps.deps:
+        stem = build / name.lower()
+        provider_file = stem.with_name(stem.name + ".provider.txt")
+        if not provider_file.is_file():
+            raise ConfigError(f"{provider_file} does not exist: the build did not resolve {name}. "
+                              "Configure and run the tests first.")
+        provider = _read_text(provider_file)
+        if provider in ("none", "system"):
+            why = "was not used by this build" if provider == "none" else "came from the system, which has no tag"
+            print(f"{name}: {why}, its record is unchanged")
+            continue
+        tag_file = stem.with_name(stem.name + ".tag.txt")
+        if not tag_file.is_file():
+            raise ConfigError(f"{tag_file} does not exist: the build did not resolve {name}.")
+        commit_file = stem.with_name(stem.name + ".commit.txt")
+        commit = _read_text(commit_file) if provider == "fetch" and commit_file.is_file() else ""
+        entries[name] = LockEntry(_read_text(tag_file), provider, commit or None)
+        print(f"{name}: recorded {entries[name].tag} ({provider})")
+    write_lock(lock_path, Lock(entries))
     return 0
 
 
@@ -381,13 +500,30 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("requirements", "PEP 508 requirements, one per line")
     p.add_argument("--kind", required=True, help="build | runtime | extra:<group>")
     p.add_argument("--group", action="append", help="a group selected at build time (kind build); repeatable")
+    p.add_argument("--with-pyproject", action="store_true",
+                   help="also the requirements of pyproject.toml; then --kind may be group:<name> or all")
     p.set_defaults(func=cmd_requirements)
+    p = add("install", "install requirements into an environment")
+    p.add_argument("--kind", action="append",
+                   help="build | runtime | extra:<name> | group:<name> | all; repeatable (default: build and runtime)")
+    p.add_argument("--all", action="store_true", help="every kind: build, runtime, all extras and all dependency groups")
+    p.add_argument("--installer", choices=("auto", "uv", "pip"), default="auto", help="uv when found, else pip")
+    p.add_argument("--python", default=sys.executable, help="the interpreter whose environment is changed (default: this one)")
+    p.add_argument("--dry-run", action="store_true", help="show what would be installed and the command; install nothing")
+    p.add_argument("installer_args", nargs="*", metavar="INSTALLER-ARGS", help="after --: passed to uv pip / pip install")
+    p.set_defaults(func=cmd_install)
+    add("export", "JSON for the CMake resolver").set_defaults(func=cmd_export)
+    p = add("record", "write polybind.lock from what a build resolved")
+    p.add_argument("--build-dir", type=Path, required=True, help="the CMake build directory that resolved the dependencies")
+    p.set_defaults(func=cmd_record)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     args.root = args.root.resolve()
+    if getattr(args, "build_dir", None) is not None:
+        args.build_dir = args.build_dir.resolve()
     try:
         return int(args.func(args))
     except ConfigError as exc:

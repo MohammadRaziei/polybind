@@ -307,7 +307,8 @@ polybind version check            # exit 1 if the version is not the latest git 
 polybind config                   # show the effective settings
 polybind deps validate            # check settings, dependencies and polybind.lock
 polybind deps list [--json]       # the dependencies with every default filled in
-polybind deps requirements --kind build|runtime|extra:<group>
+polybind deps requirements --kind build|runtime|extra:<group> [--with-pyproject]
+polybind deps install [--all]     # build + runtime requirements of pyproject.toml and [deps] into the environment
 ```
 
 The version lives in a header with `#define <PREFIX>VERSION_MAJOR|MINOR|PATCH <N>` or in the
@@ -328,10 +329,21 @@ tag-format = "v%s"
 version-spec = ">=2.2.0,<3"
 targets      = ["liburlparser::urlparser"]
 python.cmake-flag = "--cmake-dir"   # a python.* table turns the pip/uv provider on
+# python.version-command = "python -m liburlparser --version"   # the default; a console script works too, e.g. "tool --version"
 fetch.url    = "https://github.com/mohammadraziei/liburlparser.git"   # fetch.url turns the git provider on
 ```
 
-`polybind.lock` is a separate file, written only by `polybind deps record` (not implemented yet).
+`polybind.lock` is a separate file, written only by `polybind deps record` (the `polybind_deps_record` target).
+
+Resolving the dependencies in a CMake project (Python is needed at configure time; the settings are TOML and are read by `python -m polybind`):
+
+```cmake
+execute_process(COMMAND python -m polybind cmake-dir OUTPUT_VARIABLE _d OUTPUT_STRIP_TRAILING_WHITESPACE)
+include("${_d}/PolybindDeps.cmake")
+polybind_deps_load()
+polybind_resolve_dep(liburlparser)     # afterwards the targets of [deps.liburlparser] exist
+polybind_deps_record_target()          # after the tests: cmake --build . --target polybind_deps_record
+```
 
 Reading TOML uses `tomllib` (Python 3.11+) or `tomli`, which is installed automatically on
 older Pythons.

@@ -25,7 +25,7 @@ Tools, each independent of the others and each reading the same settings:
 | `gen` | wrapper generation from `.pyi` stubs | exists (`polybind INPUT.pyi`) |
 | `version` | one source of truth for the project version, git tags | **[done]** |
 | settings | `polybind.toml` / `[tool.polybind]` | **[done]**, being revised (section 3) |
-| `deps` | native dependency declaration, resolution, lock | **[decided]**, this spec |
+| `deps` | native dependency declaration, resolution, lock | **[done]**: settings, lock, CMake resolver, record (M2, M3) |
 | build plugin | puts the declared dependencies into the build and runtime requirements | **[proposed]** + **[unverified]** |
 | `bundle` | ships a dependency's shared library inside our wheel | **[decided]** in principle |
 
@@ -87,7 +87,7 @@ A dependency is a native library with a CMake package, usually also a pip packag
 | key | type | default | meaning |
 |---|---|---|---|
 | `description` | string | `""` | free text |
-| `version-spec` | string | `""` (any) | PEP 440 range, checked against what the provider found |
+| `version-spec` | string | `""` (any) | comma separated clauses of `~=`, `>=`, `>`, `<=`, `<`, `==`, `!=` and a plain number (`>=2.2.0,<3`); see 5.6 |
 | `targets` | list of strings | `["<name>::<name>"]` **[proposed]** | imported targets that must exist after resolving |
 | `find-package` | string | the name | argument of `find_package()` |
 | `optional` | bool | `false` | may be missing: no error, `POLYBIND_DEP_<NAME>_FOUND` is false, the feature is left out |
@@ -102,7 +102,7 @@ Validation (errors unless said otherwise):
 
 1. unknown key, wrong type;
 2. `runtime = false` and `buildtime = false` together;
-3. `version-spec` must be a comma separated list of `~=`, `==`, `!=`, `<=`, `>=`, `<`, `>` followed by a version;
+3. `version-spec` must follow 5.6 (no `rc`/`post` suffixes, no `*`);
 4. `prefer-provider` is one of `python`, `uv`, `pip`, `fetch`, `system`, or empty;
 5. `runtime = true` needs the python provider on, because only a pip package can be a Python requirement **[proposed]**;
 6. `bundle = true` together with `runtime = true`: warning, unless the Python import is really needed.
@@ -117,6 +117,8 @@ Validation (errors unless said otherwise):
 | `fetch` | `git clone --depth 1` of one tag with FetchContent: no Python, no submodule, no history |
 | `system` | `find_package()` on the normal search path; never part of `auto` |
 
+A dependency that is already importable (installed in the build tree, in the build environment, in a conda environment) is used without installing. With the pin on, an installed version that is not the recorded one is replaced. The query snippets have no `;` in them: it would split the argument (a CMake list).
+
 `POLYBIND_DEPS_PYTHON_INSTALLER` does not exist: the installer is part of the provider name. Its old value `none` ("use only what is already importable") is `POLYBIND_DEPS_OFFLINE`.
 
 A provider is **on only when its table exists**: any `python.*` key (or `python = {}`) turns on `python`/`uv`/`pip`; `fetch.url` turns on `fetch`. A dependency with neither can only be found by `system` when it is forced.
@@ -124,7 +126,7 @@ A provider is **on only when its table exists**: any `python.*` key (or `python 
 ### 5.3 Selection
 
 1. `POLYBIND_DEPS_PROVIDER_<NAME>` or `POLYBIND_DEPS_PROVIDER` (not `auto`) forces one provider and nothing else is tried; failing is an error.
-2. With `auto`, the order is: `prefer-provider` (own key, then `POLYBIND_DEPS_PREFER_PROVIDER[_<NAME>]`), then the provider recorded in `polybind.lock` **[proposed]**, then `python`, then `fetch`.
+2. With `auto`, the order is: the preferred provider (the more specific wins: `POLYBIND_DEPS_PREFER_PROVIDER_<NAME>`, `POLYBIND_DEPS_PREFER_PROVIDER`, then `prefer-provider`), then the provider recorded in `polybind.lock` (`fetch` goes first, `uv` and `pip` count as `python`) **[proposed]**, then `python`, then `fetch`. Preferring `uv` or `pip` tries that installer instead of `python`; the others follow. **[done]**
 3. `prefer-provider = "python"` when `[deps.X.python]` is absent: a warning, and the order goes on without it.
 4. A provider that is off is skipped silently, except in step 3.
 
@@ -136,10 +138,10 @@ A provider is **on only when its table exists**: any `python.*` key (or `python 
 | `python.module` | package with `-` replaced by `_` | module name |
 | `python.module-cli` | `true` | the module answers `python -m <module> <cmake-flag>` |
 | `python.cmake-flag` | `"--cmake-dir"` | string or list of arguments; a list for `["py", "--cmake-dir"]` |
-| `python.version-flag` | `"--version"` | `""` reads the version from the package metadata |
+| `python.version-command` | `"python -m <module> --version"` (with `module-cli = false`: `""`) | the command that prints the version: a string or a list; `""` reads the package metadata. A first word of `python` is the interpreter the resolver found (`{module}` is replaced by the module name); any other first word is a console script of the package, e.g. `"mbedtls-cli --version"`, looked for in the scripts directory of the install (`bin`, `Scripts` on Windows) and then on `PATH`. A command that fails or prints nothing falls back to the package metadata |
 | `python.cmake-function` | `"get_cmake_dir"` | only with `module-cli = false` |
 
-`module-cli = false`: setting `cmake-flag` is an error as well; the CMake dir is `python -c "import <module>; print(<module>.<cmake-function>())"` and the version comes from the package metadata, so setting `version-flag` there is an error. Known conventions: httpp and pybind11 use `get_cmake_dir`, nanobind uses `cmake_dir`.
+`module-cli = false`: setting `cmake-flag` is an error; the CMake dir is `python -c "import <module>; print(<module>.<cmake-function>())"` and the version comes from the package metadata unless `version-command` names a command (a console script, say). Known conventions: httpp and pybind11 use `get_cmake_dir`, nanobind uses `cmake_dir`.
 
 Verified in httpp's source: `python -m httpp --cmake-dir` does not exist; the CMake dir is printed by `python -m httpp py --cmake-dir`. libspeech reads it with `httpp.get_cmake_dir()` today.
 
@@ -153,7 +155,9 @@ Verified in httpp's source: `python -m httpp --cmake-dir` does not exist; the CM
 
 ### 5.6 Version check
 
-After a provider delivers, the version it reports is checked against `version-spec`. A mismatch is a warning and an error with `POLYBIND_DEPS_STRICT`. The exact comparison semantics are taken from httpp's `Deps.cmake` when the resolver is written. **[unverified]**
+**[done]** (ported from httpp's `Deps.cmake`, `polybind_version_satisfies`). A clause is an operator and a plain number; numbers compare as CMake's `VERSION_*` does, so `1.0` equals `1.0.0`. `~=2.2.1` means `>=2.2.1,<2.3` and `~=2.2` means `>=2.2,<3` (at least two numbers). A version that is not a plain number (`0.0.0+unknown`) satisfies only an empty spec.
+
+A provider whose version is outside `version-spec` has not delivered: the next provider is tried. When the version found is not the version in `polybind.lock`, it is a warning, and an error with `POLYBIND_DEPS_STRICT`.
 
 ## 6. Optional groups: `[optional-deps.<group>.<name>]` **[decided]**
 
@@ -184,6 +188,18 @@ requires = ["scikit-build-core", "nanobind", "polybind"]
 Mechanism under study: a dynamic-metadata provider for scikit-build-core that fills `dependencies` (and `optional-dependencies`) from 7.1 and announces the build requirements through `get_requires_for_dynamic_metadata`. The scikit-build-core documentation calls this interface provisional, and it is not known whether the returned list reaches the isolated build environment. **An experiment decides** (milestone M4); fallbacks are `[tool.scikit-build] build.requires` (static) or a thin PEP 517 backend wrapping `scikit_build_core.build`.
 
 polybind never runs `pip install` itself during the build: an isolated build environment may not contain pip.
+
+### 7.3 `polybind deps install` **[done]**
+
+Puts the Python requirements of a project into an environment without installing the project, so a developer (or a non-isolated build) can have nanobind, scikit-build-core, numpy and the native dependencies that are pip packages with one command. **There is no `[python-deps]` section**: pure-Python requirements stay in `pyproject.toml`, the standard place, and polybind reads them without changing them **[decided]**. Declaring them a second time would need dynamic metadata and take the static metadata away from tools that read `pyproject.toml` without building.
+
+Sources, merged, `pyproject.toml` first, without duplicates (exact string) and without `polybind` itself: `[build-system].requires`, `[project].dependencies`, `[project.optional-dependencies]`, `[dependency-groups]` (PEP 735, `include-group` followed, names normalised, a cycle is an error), and the pip packages among `[deps]` and `[optional-deps]` (7.1).
+
+Kinds: `build`, `runtime`, `extra:<name>`, `group:<name>`, `all`. `--all` is `--kind all`: build, runtime, every extra (of either source) and every dependency group. Default without a kind: `build` and `runtime`. An installed `extra:<name>` also selects the polybind group of that name, so its `buildtime` entries join `build` (section 6, option a).
+
+Installer: `--installer auto|uv|pip` (uv when found, else pip), into the environment of `--python` (default: the running interpreter), arguments after `--` go to `uv pip install` / `pip install` (`--target`, `--upgrade`, ...), `--dry-run` shows the requirements and the quoted command, the installer's exit code is the command's. A requirement is passed as one argument, markers included.
+
+`polybind deps requirements --with-pyproject` prints the same list (kinds `group:<name>` and `all` too) for use in a pipeline.
 
 ## 8. `bundle` **[decided]** in principle
 
@@ -225,11 +241,31 @@ Rules:
 - Whether a provider mismatch is a warning or an error: warning **[proposed]**.
 - Whether the file is TOML or JSON: TOML **[open]**.
 
-## 10. CMake options (per machine, not in the files)
+## 10. The CMake resolver **[done]**
 
-`POLYBIND_DEPS_PROVIDER` (`auto|python|uv|pip|fetch|system`), `POLYBIND_DEPS_PROVIDER_<NAME>`, `POLYBIND_DEPS_PREFER_PROVIDER[_<NAME>]`, `POLYBIND_DEPS_PYTHON` (interpreter), `POLYBIND_DEPS_PIN` (ON), `POLYBIND_DEPS_STRICT` (OFF), `POLYBIND_DEPS_OFFLINE` (OFF), `POLYBIND_DEPS_SKIP_<NAME>`. They are httpp's `HTTPP_DEPS_*` options with the prefix changed. **[decided]**
+`polybind/cmake/PolybindDeps.cmake`, ported from httpp's `Deps.cmake` (`HTTPP_` is `POLYBIND_`). The project includes it from the installed polybind (resolver distribution (a), decided by writing it that way; (b), copying the file, stays possible):
 
-How a project obtains the resolver (`PolybindDeps.cmake`) **[open]**: (a) `include("<output of python -m polybind cmake-dir>/PolybindDeps.cmake")`, since polybind is a build requirement anyway; (b) copy the file into the project. (a) first.
+```cmake
+execute_process(COMMAND python -m polybind cmake-dir OUTPUT_VARIABLE _d OUTPUT_STRIP_TRAILING_WHITESPACE)
+include("${_d}/PolybindDeps.cmake")
+polybind_deps_load()                    # runs `python -m polybind deps export`; CMake cannot read TOML
+polybind_resolve_dep(liburlparser)      # the targets exist afterwards, or configure fails (unless optional)
+polybind_deps_record_target()           # the target polybind_deps_record
+```
+
+Python is therefore needed at configure time, and `polybind` must be importable by that interpreter (`POLYBIND_DEPS_PYTHON` or the one CMake finds).
+
+After a successful resolve: `POLYBIND_DEP_<N>_FOUND`, `POLYBIND_DEP_<N>_PROVIDER` (`fetch`, `uv`, `pip` or `system`: what really delivered it, never `python`) and `POLYBIND_DEP_<N>_VERSION`; `<N>` is the name in upper case with every non-alphanumeric character turned into `_`. For `polybind deps record` the resolver writes `<build dir>/polybind-deps/<name>.{provider,version,tag,commit}.txt` and `pin.txt`. A python provider has no tag of its own: it is the version written with `fetch.tag-format`. `optional = true` dependencies that were not found (or skipped with `POLYBIND_DEPS_SKIP_<N>`) write provider `none`.
+
+`polybind deps record --build-dir DIR` writes `polybind.lock` from those files. It refuses when the build was pinned (`pin.txt` is ON): a pinned build only used what was already recorded. A dependency that this build left out (`none`) or took from the system (no tag) keeps its old entry; entries of dependencies that are no longer declared are kept too (`deps validate` warns about them).
+
+Fetch with the pin on needs a `tag` in the lock (a configure without a lock fails for a fetch-only dependency); a `tag` that is not made by `fetch.tag-format` (a commit id) is cloned without `--depth 1`.
+
+Tested with real CMake, pip, uv 0.11 and git on Linux; see `tests/test_resolver.py`. Not run on Windows or macOS.
+
+### CMake options (per machine, not in the files)
+
+`POLYBIND_DEPS_PROVIDER` (`auto|python|uv|pip|fetch|system`), `POLYBIND_DEPS_PROVIDER_<NAME>`, `POLYBIND_DEPS_PREFER_PROVIDER[_<NAME>]`, `POLYBIND_DEPS_PYTHON` (interpreter), `POLYBIND_DEPS_PIN` (ON), `POLYBIND_DEPS_STRICT` (OFF), `POLYBIND_DEPS_OFFLINE` (OFF), `POLYBIND_DEPS_SKIP_<NAME>`. They are httpp's `HTTPP_DEPS_*` options with the prefix changed. **[done]**
 
 ## 11. Command line
 
@@ -239,15 +275,17 @@ How a project obtains the resolver (`PolybindDeps.cmake`) **[open]**: (a) `inclu
 | `polybind --version` | exists |
 | `polybind version ...` | **[done]** |
 | `polybind config` | **[done]**: effective settings and their sources |
-| `polybind deps validate` | M2: settings, dependencies and lock |
-| `polybind deps list` | M2: the dependencies with every default filled in |
-| `polybind deps requirements --kind K` | M2 |
-| `polybind deps record` | M3 |
-| `polybind cmake-dir` | M3 |
+| `polybind deps validate` | **[done]**: settings, dependencies and lock |
+| `polybind deps list [--json]` | **[done]**: the dependencies with every default filled in |
+| `polybind deps requirements --kind K` | **[done]** |
+| `polybind deps install [--all] [--kind K] [-- ARGS]` | **[done]**: 7.3 |
+| `polybind deps export` | **[done]**: the JSON the CMake resolver reads |
+| `polybind deps record --build-dir DIR` | **[done]** |
+| `polybind cmake-dir` | **[done]** |
 
 ## 12. Repository and tests
 
-- `polybind/config.py` settings, `polybind/version.py`, `polybind/deps.py` model, validation, requirements, `polybind/lock.py`, `cmake/PolybindDeps.cmake` (M3).
+- `polybind/config.py` settings, `polybind/version.py`, `polybind/deps.py` model, validation, requirements, `polybind/lock.py`, `polybind/cmake/PolybindDeps.cmake`.
 - Everything is built and run through CMake: `cmake -S . -B build && ctest` runs ruff and pytest. No direct pytest or ruff calls in the workflow.
 - Every rule above that says "error" has a test that triggers it.
 
@@ -256,8 +294,8 @@ How a project obtains the resolver (`PolybindDeps.cmake`) **[open]**: (a) `inclu
 | | content |
 |---|---|
 | M1 | version and settings **[done]** |
-| M2 | settings revision (`polybind.toml`, dashes, `schema`), dependency model and validation, lock reading and writing, `deps validate|list|requirements` |
-| M3 | CMake resolver with the python and fetch providers, `deps record`, `cmake-dir`; tests with local fake packages and local git repositories |
+| M2 | **[done]** settings revision (`polybind.toml`, dashes, `schema`), dependency model and validation, lock reading and writing, `deps validate|list|requirements` |
+| M3 | CMake resolver with the python (uv, pip), fetch and system providers, `deps export`, `deps record`, `cmake-dir`; tests with local wheels and local git repositories **[done]** |
 | M4 | experiment, then the build plugin |
 | M5 | `bundle` |
 | M6 | `[[gen.stubs]]` for `gen` |
@@ -266,8 +304,9 @@ How a project obtains the resolver (`PolybindDeps.cmake`) **[open]**: (a) `inclu
 
 1. Group build requirements: (a) or (b), section 6.
 2. Lock format: TOML or JSON, section 9.
-3. Resolver distribution: (a) or (b), section 10.
+3. ~~Resolver distribution~~ (a) is implemented, section 10; (b) is still possible.
 4. `targets` default `<name>::<name>`, section 5.1.
 5. `runtime = true` requires the python provider, section 5.1 rule 5.
 6. A locked provider that cannot deliver: warning or error, section 9.
 7. Does the plugin mechanism of section 7.2 work at all.
+8. `polybind build`: what it would add to `python -m build` (a gate: `deps validate`, `version check`?). Nothing is written until that is decided.
