@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from polybind.config import read_toml
 from polybind.version import (
     HeaderSource,
     Version,
@@ -253,4 +254,4 @@ def test_cli_works_in_own_repo() -> None:
         cwd=REPO_ROOT, capture_output=True, text=True, check=False,
     )
     assert out.returncode == 0
-    assert out.stdout.strip() == "0.1.0"
+    assert out.stdout.strip() == read_toml(REPO_ROOT / "pyproject.toml")["project"]["version"]  # whatever the release is

@@ -1,0 +1,54 @@
+# Changelog
+
+All notable changes to polybind. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
+version numbers follow [Semantic Versioning](https://semver.org/) (while the major version is 0, a minor release may change
+the settings files).
+
+## [0.2.0] - 2026-11-12
+
+polybind grows from a stub generator into a helper for hybrid C++/Python projects: one version, the native
+dependencies, and the requirements of a project in one place. The design is in `spec.md`.
+
+### Added
+
+- **`polybind version`** (`major|minor|patch [VALUE]`, `tag`, `tag set`, `tag create`, `check`): the version comes from a
+  `*VERSION_MAJOR/MINOR/PATCH` header or from a static `version` in `pyproject.toml`. Writing changes only the number.
+  `check` exits 1 when the version is not the latest tag.
+- **Settings files**: `polybind.toml` and `[tool.polybind]` in `pyproject.toml` (the first wins, key by key), with a
+  `schema` key, dashes in key names, and errors that suggest the key you meant. `polybind config` shows the effective
+  settings and where each came from.
+- **Native dependencies**, `[deps.<name>]` and `[optional-deps.<group>.<name>]`: `version-spec`, `targets`, `find-package`,
+  `optional`, `prefer-provider`, `runtime` / `buildtime`, `bundle` (recorded, not implemented yet), and the provider tables
+  `python.*` and `fetch.*`.
+- **`polybind.lock`**: the pinned tag, provider and commit per dependency, written only by `polybind deps record`.
+- **CMake resolver** (`PolybindDeps.cmake`, found with `polybind cmake-dir`): `polybind_deps_load()`,
+  `polybind_resolve_dep(<name>)` and the `polybind_deps_record` target. Providers: `python` (installed with uv or pip),
+  `fetch` (git, newest tag in range, moved-tag check by commit) and `system`. Options: `POLYBIND_DEPS_PROVIDER`,
+  `POLYBIND_DEPS_PREFER_PROVIDER`, `POLYBIND_DEPS_PYTHON`, `POLYBIND_DEPS_PIN`, `POLYBIND_DEPS_STRICT`,
+  `POLYBIND_DEPS_OFFLINE`. After a resolve, `POLYBIND_DEP_<N>_FOUND`, `_PROVIDER` and `_VERSION` are set.
+- **`polybind deps`**: `validate`, `list`, `requirements`, `install`, `export` and `record`.
+- **`python.version-command`**: how the version of a Python dependency is found. By default `python -m <module>
+  --version`; a string or a list; `""` reads the package metadata; a first word other than `python` runs a console script
+  of the package. A command that fails falls back to the package metadata.
+- **Build plugin for scikit-build-core**: a dynamic-metadata provider, so that with `polybind` in
+  `[build-system].requires` and `[[tool.dynamic-metadata]] provider = "polybind"`, the build requirements of
+  `polybind.toml` are installed into the isolated build environment and the runtime ones (and extras) go into the wheel
+  metadata. See `spec.md` 7.2 and the README.
+- Tests that run the real CMake, pip, uv and git, and a real scikit-build-core build (`tests/test_resolver.py`,
+  `tests/test_metadata.py`).
+
+### Changed
+
+- `.polybind` is replaced by `polybind.toml`.
+- The tests no longer hard-code the repository's own version.
+
+### Notes
+
+- Checked on Linux with Python 3.12, CMake 4.4, uv 0.11, pip 26 and scikit-build-core 1.1.2 only. Windows, macOS, Python
+  3.8 to 3.11 and older scikit-build-core releases have not been run, so `requires-python >= 3.8` is still a claim, not
+  a measurement.
+- The build plugin takes no settings: groups cannot be selected at build time.
+- `bundle` (shipping a dependency's shared library inside the wheel) and `[[gen.stubs]]` are not done.
+- 0.1.0 on PyPI has no build plugin: use 0.2.0 or later in `[build-system].requires`.
+
+[0.2.0]: https://github.com/mohammadraziei/polybind/releases/tag/v0.2.0
