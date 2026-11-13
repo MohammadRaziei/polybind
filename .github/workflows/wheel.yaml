@@ -63,7 +63,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install wheel
-        run: pip install --upgrade --find-links ./dist/ polybind
+        run: pip install --upgrade --find-links ./dist/ "polybind[test]"
 
       - name: test polybind installation 
         run: polybind -h
@@ -71,11 +71,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Install test dependencies
-        run: pip install pytest-cov pytest-xdist pytest-asyncio
-
-      - name: Run tests
-        run: python -m pytest -v 
+      - name: Run lint and tests (CMake, like locally)
+        run: |
+          cmake -S . -B build -DPython3_EXECUTABLE="$(which python)"
+          ctest --test-dir build --output-on-failure
 
 
   release:

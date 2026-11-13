@@ -17,6 +17,12 @@ the settings files).
 
 ### Fixed
 
+- **`import polybind` had no API.** The package's `__init__.py` was empty; the one with `PolybindGenerator` and
+  `__version__` sat in the repository root, outside the wheel (and made the root look like a package, so `python -m polybind`
+  failed from the parent directory). The API is now in `polybind/__init__.py`, imported on first use so that
+  `import polybind` stays cheap. The root `__init__.py` and the unused `requirements.txt` are gone; the test tools are the
+  `test` extra of `pyproject.toml`, and CI runs `ctest` like a local checkout does.
+
 - **`python.version-command` may print more than the number.** `python -m httpp --version` prints `httpp 0.8.1`, which the
   resolver took as the version and refused (`>=0.8,<0.9` not satisfied). The version is now the first plain number of the
   first line.

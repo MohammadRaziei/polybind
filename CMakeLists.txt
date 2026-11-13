@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
 project(polybind LANGUAGES NONE)
 
-# Everything is built and run through CMake: `ctest` runs lint and the tests.
+# Not part of the wheel: the entry point of the development workflow, locally and in CI.
+#   cmake -S . -B build && ctest --test-dir build --output-on-failure      (ruff, then pytest)
+# The tools they need are the `test` extra of pyproject.toml.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 enable_testing()

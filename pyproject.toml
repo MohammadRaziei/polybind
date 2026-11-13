@@ -28,6 +28,9 @@ dependencies = [
     "tomli>=1.1.0; python_version < '3.11'",   # tomllib backport (settings files)
 ]
 
+[project.optional-dependencies]
+test = ["pytest", "pytest-xdist", "ruff"]       # what `ctest` runs: ruff and pytest (see CMakeLists.txt)
+
 [project.scripts]
 polybind = "polybind.__main__:main"
 
