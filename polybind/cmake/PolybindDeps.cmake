@@ -259,7 +259,9 @@ endfunction()
 # word is a plain number the last word stays as it is ("0.0.0+unknown" then satisfies only an empty spec, section 5.6). Empty
 # output stays empty.
 function(_polybind_deps_version_from_output out raw)
-    string(REGEX MATCH "^[^\r\n]*" _line "${raw}")
+    # REGEX MATCH with a pattern that can match nothing is an error in CMake 3.21 to 3.31, so the first line is cut with REPLACE
+    string(STRIP "${raw}" _line)
+    string(REGEX REPLACE "[\r\n].*$" "" _line "${_line}")
     string(STRIP "${_line}" _line)
     string(REGEX REPLACE "[ \t]+" ";" _words "${_line}")
     set(_version "")

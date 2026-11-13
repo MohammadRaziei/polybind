@@ -268,7 +268,7 @@ def test_version_command_defaults_to_the_module_cli(project: Project) -> None:
 
 @pytest.mark.parametrize(
     "printed",
-    ["fakelib 2.5.0", "v2.5.0", "fakelib 2.5.0 (build 7)", "fakelib version v2.5.0\nsecond line 9.9.9"],
+    ["fakelib 2.5.0", "v2.5.0", "fakelib 2.5.0 (build 7)", "fakelib version v2.5.0\nsecond line 9.9.9", "\n\nfakelib 2.5.0"],
 )
 def test_version_command_may_print_more_than_the_number(project: Project, printed: str) -> None:
     # argparse's `version=` prints "<prog> <version>"; the version is the first plain number of the first line.
