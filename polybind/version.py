@@ -36,7 +36,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from polybind.config import ConfigError, load_config
+from polybind.config import load_config
+from polybind.errors import PolybindError
 
 if TYPE_CHECKING:
     Source = "HeaderSource | PyprojectSource"
@@ -51,7 +52,7 @@ _DEFINE_ANY = re.compile(
 )
 
 
-class VersionError(Exception):
+class VersionError(PolybindError):
     """A problem the user can fix (bad input, missing source, git refused)."""
 
 
@@ -413,62 +414,50 @@ def _add_common(parser: argparse.ArgumentParser, *, sub: bool) -> None:
     )
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="polybind version",
+def _run(args: argparse.Namespace) -> int:
+    """Settings: command line > polybind.toml > [tool.polybind] in pyproject.toml > built-in default."""
+    args.root = args.root.resolve()
+    config = load_config(args.root)
+    file = args.file
+    if file is None and config.get("version", "file"):
+        file = Path(config.get("version", "file"))
+    prefix = args.prefix if args.prefix is not None else config.get("version", "prefix")
+    args.tag_format = args.tag_format or config.get("version", "tag-format") or DEFAULT_TAG_FORMAT
+    return int(args.handler(args, detect_source(args.root, file, prefix)))
+
+
+def add_parser(subs: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """Register ``polybind version``."""
+    parser = subs.add_parser(
+        "version",
+        help="show, change and tag the project version",
         description="Show, change and tag the project version.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent(__doc__.split("Usage::")[1]),
     )
     _add_common(parser, sub=False)
-    parser.set_defaults(func=cmd_show, part=None)
+    parser.set_defaults(func=_run, handler=cmd_show, part=None)
     subs = parser.add_subparsers(dest="command", metavar="COMMAND")
 
     for part in PARTS:
         p = subs.add_parser(part, help=f"show or change the {part} version")
         _add_common(p, sub=True)
         p.add_argument("value", nargs="?", help="a number (set) or an offset: + - +N -N")
-        p.set_defaults(func=cmd_part, part=part)
+        p.set_defaults(handler=cmd_part, part=part)
 
     tag = subs.add_parser("tag", help="show the latest git tag; set / create")
     _add_common(tag, sub=True)
-    tag.set_defaults(func=cmd_tag, action=None, value=None)
+    tag.set_defaults(handler=cmd_tag, action=None, value=None)
     tag_subs = tag.add_subparsers(dest="action", metavar="ACTION")
     tag_subs.add_parser("set", help="set the version from the latest tag").set_defaults(
-        func=cmd_tag
+        handler=cmd_tag
     )
     create = tag_subs.add_parser("create", help="write the version, commit it, tag it")
     create.add_argument("value", nargs="?", help="major | minor | patch | X.Y.Z")
-    create.set_defaults(func=cmd_tag)
+    create.set_defaults(handler=cmd_tag)
     for p in tag_subs.choices.values():
         _add_common(p, sub=True)
 
     check = subs.add_parser("check", help="exit 1 when the version is not the latest tag")
     _add_common(check, sub=True)
-    check.set_defaults(func=cmd_check)
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    args.root = args.root.resolve()
-    try:
-        # command line > polybind.toml > [tool.polybind] in pyproject.toml > built-in default
-        config = load_config(args.root)
-        file = args.file
-        if file is None and config.get("version", "file"):
-            file = Path(config.get("version", "file"))
-        prefix = args.prefix if args.prefix is not None else config.get("version", "prefix")
-        args.tag_format = (
-            args.tag_format or config.get("version", "tag-format") or DEFAULT_TAG_FORMAT
-        )
-        source = detect_source(args.root, file, prefix)
-        return int(args.func(args, source))
-    except (VersionError, ConfigError) as exc:
-        print(f"polybind: error: {exc}", file=sys.stderr)
-        return 2
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    check.set_defaults(handler=cmd_check)

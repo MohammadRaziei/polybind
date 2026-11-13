@@ -17,7 +17,8 @@ Repo: `github.com/mohammadraziei/polybind` (cloned in chat, **nothing was pushed
 
 | piece | files | tests |
 |---|---|---|
-| `gen` (old): `polybind INPUT.pyi` | `polybind/core.py`, `__main__.py` | `tests/test_core.py`, `test_cli.py` |
+| `gen`: `polybind gen INPUT.pyi` | `polybind/core.py`, `gen.py` | `tests/test_core.py`, `test_cli.py` |
+| the command line: one root parser, `-h` everywhere, exit codes, `PolybindError` | `polybind/cli.py`, `errors.py`, `__main__.py` | `tests/test_cli.py` (`TestCommandLine`) |
 | `polybind version ...` (version in a header or pyproject, git tags, `check`) | `polybind/version.py` | `tests/test_version.py` |
 | settings: `polybind.toml` + `[tool.polybind]`, `schema = 1`, dashes in keys, unknown-key hints | `polybind/config.py` | `tests/test_config.py` |
 | `[deps.<name>]`, `[optional-deps.<group>.<name>]`: model, defaults, validation, requirements, `deps validate|list|requirements|export|record|install` | `polybind/deps.py` | `tests/test_deps.py` |

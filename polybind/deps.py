@@ -15,7 +15,6 @@ Usage::
                                               install requirements (pyproject.toml + [deps]) into an environment
     polybind deps export                      JSON for the CMake resolver (dependencies + the lock)
     polybind deps record --build-dir DIR      write polybind.lock from what a build resolved
-    polybind cmake-dir                        the directory of PolybindDeps.cmake
 
 The rules are in spec.md, sections 5 to 7 and 9.
 """
@@ -479,31 +478,39 @@ def cmd_record(args: argparse.Namespace) -> int:
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="polybind deps",
-        description="Native dependencies: validate, list, requirements.",
+def _run(args: argparse.Namespace) -> int:
+    args.root = args.root.resolve()
+    if getattr(args, "build_dir", None) is not None:
+        args.build_dir = args.build_dir.resolve()
+    return int(args.handler(args))
+
+
+def add_parser(subs: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """Register ``polybind deps`` and its commands."""
+    parser = subs.add_parser(
+        "deps",
+        help="native dependencies: validate, list, requirements, install, export, record",
+        description="Native dependencies: validate, list, requirements, install, export, record.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent(__doc__.split("Usage::")[1]),
     )
     subs = parser.add_subparsers(dest="command", metavar="COMMAND", required=True)
 
-    def add(name: str, help_: str) -> argparse.ArgumentParser:
-        p = subs.add_parser(name, help=help_)
+    def add(name: str, help_: str, handler: Any) -> argparse.ArgumentParser:
+        p = subs.add_parser(name, help=help_, description=help_)
         p.add_argument("--root", type=Path, default=Path.cwd(), help="project directory (default: cwd)")
+        p.set_defaults(func=_run, handler=handler)
         return p
 
-    add("validate", "check settings, dependencies and the lock").set_defaults(func=cmd_validate)
-    p = add("list", "the dependencies with every default filled in")
+    add("validate", "check settings, dependencies and the lock", cmd_validate)
+    p = add("list", "the dependencies with every default filled in", cmd_list)
     p.add_argument("--json", action="store_true", help="machine readable")
-    p.set_defaults(func=cmd_list)
-    p = add("requirements", "PEP 508 requirements, one per line")
+    p = add("requirements", "PEP 508 requirements, one per line", cmd_requirements)
     p.add_argument("--kind", required=True, help="build | runtime | extra:<group>")
     p.add_argument("--group", action="append", help="a group selected at build time (kind build); repeatable")
     p.add_argument("--with-pyproject", action="store_true",
                    help="also the requirements of pyproject.toml; then --kind may be group:<name> or all")
-    p.set_defaults(func=cmd_requirements)
-    p = add("install", "install requirements into an environment")
+    p = add("install", "install requirements into an environment", cmd_install)
     p.add_argument("--kind", action="append",
                    help="build | runtime | extra:<name> | group:<name> | all; repeatable (default: build and runtime)")
     p.add_argument("--all", action="store_true", help="every kind: build, runtime, all extras and all dependency groups")
@@ -511,25 +518,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--python", default=sys.executable, help="the interpreter whose environment is changed (default: this one)")
     p.add_argument("--dry-run", action="store_true", help="show what would be installed and the command; install nothing")
     p.add_argument("installer_args", nargs="*", metavar="INSTALLER-ARGS", help="after --: passed to uv pip / pip install")
-    p.set_defaults(func=cmd_install)
-    add("export", "JSON for the CMake resolver").set_defaults(func=cmd_export)
-    p = add("record", "write polybind.lock from what a build resolved")
+    add("export", "JSON for the CMake resolver", cmd_export)
+    p = add("record", "write polybind.lock from what a build resolved", cmd_record)
     p.add_argument("--build-dir", type=Path, required=True, help="the CMake build directory that resolved the dependencies")
-    p.set_defaults(func=cmd_record)
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    args.root = args.root.resolve()
-    if getattr(args, "build_dir", None) is not None:
-        args.build_dir = args.build_dir.resolve()
-    try:
-        return int(args.func(args))
-    except ConfigError as exc:
-        print(f"polybind: error: {exc}", file=sys.stderr)
-        return 2
-
-
-if __name__ == "__main__":
-    sys.exit(main())

@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 from polybind import config as cfg
+from polybind.cli import main as cli_main
 from polybind.config import ConfigError, load_config
-from polybind.version import main
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -27,7 +27,7 @@ def project(tmp_path: Path) -> Path:
 
 
 def run(root: Path, *args: str) -> int:
-    return main(["--root", str(root), *args])
+    return cli_main(["version", "--root", str(root), *args])
 
 
 def test_empty_project(tmp_path: Path) -> None:

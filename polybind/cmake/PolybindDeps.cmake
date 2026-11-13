@@ -254,6 +254,29 @@ function(_polybind_deps_command_run out py target_dir)
     set(${out} "${_out}" PARENT_SCOPE)
 endfunction()
 
+# The version in what a `version-command` printed: the first line, and in it the first word that is a plain number (a leading v
+# is dropped), so "0.8.1", "httpp 0.8.1" (what argparse's `version=` prints) and "httpp 0.8.1 (build 7)" all give 0.8.1. When no
+# word is a plain number the last word stays as it is ("0.0.0+unknown" then satisfies only an empty spec, section 5.6). Empty
+# output stays empty.
+function(_polybind_deps_version_from_output out raw)
+    string(REGEX MATCH "^[^\r\n]*" _line "${raw}")
+    string(STRIP "${_line}" _line)
+    string(REGEX REPLACE "[ \t]+" ";" _words "${_line}")
+    set(_version "")
+    set(_last "")
+    foreach(_w IN LISTS _words)
+        set(_last "${_w}")
+        if(_w MATCHES "^v?([0-9]+(\\.[0-9]+)*)$")
+            set(_version "${CMAKE_MATCH_1}")
+            break()
+        endif()
+    endforeach()
+    if(_version STREQUAL "")
+        set(_version "${_last}")
+    endif()
+    set(${out} "${_version}" PARENT_SCOPE)
+endfunction()
+
 # Asks the package for its CMake directory and version. Sets _py_cmake_dir and _py_version in the caller, empty when the
 # package is not importable. With module-cli the CMake dir comes from `python -m <module> <cmake_flag>`, without it from
 # <module>.<cmake_function>(). The version comes from <version_command> when it is not empty (and prints something) and from
@@ -268,6 +291,7 @@ function(_polybind_deps_python_query py target_dir module package module_cli cma
     set(_version "")
     if(_cmake_dir AND NOT version_command STREQUAL "")
         _polybind_deps_command_run(_version "${py}" "${target_dir}" ${version_command})
+        _polybind_deps_version_from_output(_version "${_version}")
     endif()
     if(_cmake_dir AND _version STREQUAL "")
         _polybind_deps_python_run(_version "${py}" "${target_dir}" -c

@@ -30,10 +30,11 @@ from __future__ import annotations
 import argparse
 import difflib
 import json
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from polybind.errors import PolybindError
 
 CONFIG_FILE = "polybind.toml"
 PYPROJECT_FILE = "pyproject.toml"
@@ -48,7 +49,7 @@ SCHEMA: dict[str, set[str] | None] = {
 }
 
 
-class ConfigError(Exception):
+class ConfigError(PolybindError):
     """Unreadable or invalid settings."""
 
 
@@ -152,17 +153,8 @@ def load_config(root: Path) -> Config:
     return config
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="polybind config", description="Show the effective polybind settings."
-    )
-    parser.add_argument("--root", type=Path, default=Path.cwd(), help="project directory")
-    args = parser.parse_args(argv)
-    try:
-        config = load_config(args.root.resolve())
-    except ConfigError as exc:
-        print(f"polybind: error: {exc}", file=sys.stderr)
-        return 2
+def cmd_config(args: argparse.Namespace) -> int:
+    config = load_config(args.root.resolve())
     if not config.sources:
         print("no polybind settings found")
         return 0
@@ -172,5 +164,13 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+def add_parser(subs: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """Register ``polybind config``."""
+    p = subs.add_parser(
+        "config",
+        help="show the effective settings and the files they come from",
+        description="Show the effective polybind settings: [tool.polybind] of pyproject.toml "
+        "merged with polybind.toml (the latter wins), as JSON.",
+    )
+    p.add_argument("--root", type=Path, default=Path.cwd(), help="project directory (default: cwd)")
+    p.set_defaults(func=cmd_config)

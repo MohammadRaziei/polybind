@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from polybind.cli import main as cli_main
 from polybind.config import read_toml
 from polybind.version import (
     HeaderSource,
@@ -15,7 +16,6 @@ from polybind.version import (
     VersionError,
     apply_value,
     detect_source,
-    main,
     parse_tag,
     tag_name,
 )
@@ -57,7 +57,7 @@ def py_project(tmp_path: Path) -> Path:
 
 
 def run(root: Path, *args: str) -> int:
-    return main(["--root", str(root), *args])
+    return cli_main(["version", "--root", str(root), *args])
 
 
 # --------------------------------------------------------------------------- Version

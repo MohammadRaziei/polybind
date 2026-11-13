@@ -12,8 +12,9 @@ from pathlib import Path
 import pytest
 from test_resolver import make_wheel
 
+from polybind.cli import main as cli_main
 from polybind.config import ConfigError, load_config
-from polybind.deps import load_dependencies, main
+from polybind.deps import load_dependencies
 from polybind.install import gather, read_project, requirement_name
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -109,12 +110,12 @@ def test_requirement_name() -> None:
 
 
 def test_no_pyproject_no_polybind_is_nothing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["install", "--root", str(tmp_path)]) == 0
+    assert cli_main(["deps", "install", "--root", str(tmp_path)]) == 0
     assert "nothing to install" in capsys.readouterr().out
 
 
 def test_dry_run(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["install", "--root", str(project), "--installer", "pip", "--dry-run", "--", "--target", "/x"]) == 0
+    assert cli_main(["deps", "install", "--root", str(project), "--installer", "pip", "--dry-run", "--", "--target", "/x"]) == 0
     out = capsys.readouterr().out
     assert "would install 5 requirement(s)" in out
     line = next(ln for ln in out.splitlines() if ln.startswith("command: "))
@@ -126,7 +127,7 @@ def test_dry_run(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_requirements_with_pyproject(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["requirements", "--root", str(project), "--kind", "group:dev", "--with-pyproject"]) == 0
+    assert cli_main(["deps", "requirements", "--root", str(project), "--kind", "group:dev", "--with-pyproject"]) == 0
     assert capsys.readouterr().out.split() == ["ruff", "flake8"]
 
 

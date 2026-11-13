@@ -9,12 +9,12 @@ from pathlib import Path
 
 import pytest
 
+from polybind.cli import main as cli_main
 from polybind.config import ConfigError, load_config
 from polybind.deps import (
     Dependencies,
     check_lock,
     load_dependencies,
-    main,
     parse_dependency,
     requirement,
     requirements,
@@ -309,7 +309,7 @@ def project(tmp_path: Path) -> Path:
 
 
 def run(root: Path, *args: str) -> int:
-    return main([*args[:1], "--root", str(root), *args[1:]])
+    return cli_main(["deps", *args[:1], "--root", str(root), *args[1:]])
 
 
 def test_cli_validate_ok(project: Path, capsys: pytest.CaptureFixture[str]) -> None:

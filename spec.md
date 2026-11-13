@@ -22,7 +22,7 @@ Tools, each independent of the others and each reading the same settings:
 
 | tool | purpose | state |
 |---|---|---|
-| `gen` | wrapper generation from `.pyi` stubs | exists (`polybind INPUT.pyi`) |
+| `gen` | wrapper generation from `.pyi` stubs | exists (`polybind gen INPUT.pyi`) |
 | `version` | one source of truth for the project version, git tags | **[done]** |
 | settings | `polybind.toml` / `[tool.polybind]` | **[done]**, being revised (section 3) |
 | `deps` | native dependency declaration, resolution, lock | **[done]**: settings, lock, CMake resolver, record (M2, M3) |
@@ -147,7 +147,7 @@ A provider is **on only when its table exists**: any `python.*` key (or `python 
 | `python.module` | package with `-` replaced by `_` | module name |
 | `python.module-cli` | `true` | the module answers `python -m <module> <cmake-flag>` |
 | `python.cmake-flag` | `"--cmake-dir"` | string or list of arguments; a list for `["py", "--cmake-dir"]` |
-| `python.version-command` | `"python -m <module> --version"` (with `module-cli = false`: `""`) | the command that prints the version: a string or a list; `""` reads the package metadata. A first word of `python` is the interpreter the resolver found (`{module}` is replaced by the module name); any other first word is a console script of the package, e.g. `"mbedtls-cli --version"`, looked for in the scripts directory of the install (`bin`, `Scripts` on Windows) and then on `PATH`. A command that fails or prints nothing falls back to the package metadata |
+| `python.version-command` | `"python -m <module> --version"` (with `module-cli = false`: `""`) | the command that prints the version: a string or a list; `""` reads the package metadata. A first word of `python` is the interpreter the resolver found (`{module}` is replaced by the module name); any other first word is a console script of the package, e.g. `"mbedtls-cli --version"`, looked for in the scripts directory of the install (`bin`, `Scripts` on Windows) and then on `PATH`. The version is the first plain number (a leading `v` dropped) of the first line it prints, so `0.8.1` and `httpp 0.8.1` (what argparse's `version=` prints) both give 0.8.1; when no word is a number, the last word is used as it is. A command that fails or prints nothing falls back to the package metadata |
 | `python.cmake-function` | `"get_cmake_dir"` | only with `module-cli = false` |
 
 `module-cli = false`: setting `cmake-flag` is an error; the CMake dir is `python -c "import <module>; print(<module>.<cmake-function>())"` and the version comes from the package metadata unless `version-command` names a command (a console script, say). Known conventions: httpp and pybind11 use `get_cmake_dir`, nanobind uses `cmake_dir`.
@@ -299,9 +299,12 @@ Tested with real CMake, pip, uv 0.11 and git on Linux; see `tests/test_resolver.
 
 ## 11. Command line
 
+One parser (`polybind/cli.py`); every tool registers itself with `add_parser` in its own module. Rules: every command and sub-command has `-h`; `polybind` alone prints the help; there is no command-less form (`polybind INPUT.pyi` is an error that says `polybind gen INPUT.pyi`); a mistyped command is suggested; a problem the user can fix is a `PolybindError`, printed as `polybind: error: ...` with exit 2, and never a traceback. Exit codes: 0 success, 1 a check that did not pass, 2 user error, 3 a bug in the generator.
+
 | command | state |
 |---|---|
-| `polybind INPUT.pyi [options]` | exists |
+| `polybind gen INPUT.pyi [options]` | **[done]**: was `polybind INPUT.pyi` |
+| `polybind cmake-dir` | **[done]** |
 | `polybind --version` | exists |
 | `polybind version ...` | **[done]** |
 | `polybind config` | **[done]**: effective settings and their sources |

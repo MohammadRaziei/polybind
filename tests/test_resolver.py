@@ -55,7 +55,7 @@ def make_wheel(
         f"{dist}/WHEEL": "Wheel-Version: 1.0\nGenerator: polybind-tests\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
     }
     if cli:
-        files[f"{name}/__main__.py"] = MAIN.replace("@VERSION@", reported or version)
+        files[f"{name}/__main__.py"] = MAIN.replace('"@VERSION@"', repr(reported or version))
     if script:
         files[f"{dist[:-10]}.data/scripts/{script}"] = f"#!python\nprint({(reported or version)!r})\n"
     record = ""
@@ -264,6 +264,24 @@ def test_version_command_defaults_to_the_module_cli(project: Project) -> None:
     make_wheel(project.wheels, "fakelib", "2.0.0", reported="2.5.0")  # the CLI says 2.5.0, the metadata 2.0.0
     project.write('[deps.fakelib]\nversion-spec = ">=2,<3"\npython = {}\n')
     assert "deps: fakelib 2.5.0 (" in project.configure().stdout
+
+
+@pytest.mark.parametrize(
+    "printed",
+    ["fakelib 2.5.0", "v2.5.0", "fakelib 2.5.0 (build 7)", "fakelib version v2.5.0\nsecond line 9.9.9"],
+)
+def test_version_command_may_print_more_than_the_number(project: Project, printed: str) -> None:
+    # argparse's `version=` prints "<prog> <version>"; the version is the first plain number of the first line.
+    make_wheel(project.wheels, "fakelib", "2.0.0", reported=printed)
+    project.write('[deps.fakelib]\nversion-spec = ">=2,<3"\npython = {}\n')
+    assert "deps: fakelib 2.5.0 (" in project.configure().stdout
+
+
+def test_version_command_without_a_number_is_not_a_version(project: Project) -> None:
+    make_wheel(project.wheels, "fakelib", "2.0.0", reported="fakelib unknown")
+    project.write('[deps.fakelib]\nversion-spec = ">=2,<3"\npython = {}\n')
+    out = project.configure(check=False)
+    assert out.returncode != 0 and "unknown" in out.stdout + out.stderr
 
 
 def test_empty_version_command_reads_the_metadata(project: Project) -> None:

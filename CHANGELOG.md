@@ -4,6 +4,23 @@ All notable changes to polybind. The format follows [Keep a Changelog](https://k
 version numbers follow [Semantic Versioning](https://semver.org/) (while the major version is 0, a minor release may change
 the settings files).
 
+## [Unreleased]
+
+### Changed (breaking)
+
+- **The command line is one parser with real sub-commands.** `polybind INPUT.pyi` is now `polybind gen INPUT.pyi`; the old
+  form is an error that says what to type. `polybind -h` lists `gen`, `version`, `deps`, `config` and `cmake-dir` (it showed
+  only `gen` before), and every command and sub-command has its own `-h`. `polybind` alone prints the help.
+- Problems the user can fix are one exception, `PolybindError`, printed as `polybind: error: ...` with exit 2. `gen` used
+  to exit 1 for a missing file; it exits 2 now. A mistyped command is suggested (`did you mean 'version'?`).
+- The tools no longer have their own `main()` / `python -m polybind.version`; each registers with `add_parser`.
+
+### Fixed
+
+- **`python.version-command` may print more than the number.** `python -m httpp --version` prints `httpp 0.8.1`, which the
+  resolver took as the version and refused (`>=0.8,<0.9` not satisfied). The version is now the first plain number of the
+  first line.
+
 ## [0.2.0] - 2026-11-12
 
 polybind grows from a stub generator into a helper for hybrid C++/Python projects: one version, the native

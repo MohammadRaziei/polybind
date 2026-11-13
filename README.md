@@ -130,8 +130,8 @@ cython --annotate mylib.pyx   # then use stubgen on the .so
 ### 3 — Run polybind
 
 ```bash
-polybind _mylib.pyi           # writes mylib.py next to the stub
-polybind _mylib.pyi -o src/mylib.py
+polybind gen _mylib.pyi           # writes mylib.py next to the stub
+polybind gen _mylib.pyi -o src/mylib.py
 ```
 
 ### 4 — Use the wrapper
@@ -298,6 +298,10 @@ pytest --cov=polybind --cov-report=term-missing
 ## Project version, settings and dependencies
 
 The design is in [`spec.md`](spec.md).
+
+Every command has its own help: `polybind -h` lists them, `polybind deps install -h` shows one.
+Exit codes: 0 success, 1 a check did not pass (`version check`), 2 a problem you can fix (printed as
+`polybind: error: ...`), 3 a bug in the generator.
 
 ```bash
 polybind version                  # show X.Y.Z
