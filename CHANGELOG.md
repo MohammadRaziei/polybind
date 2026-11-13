@@ -4,7 +4,11 @@ All notable changes to polybind. The format follows [Keep a Changelog](https://k
 version numbers follow [Semantic Versioning](https://semver.org/) (while the major version is 0, a minor release may change
 the settings files).
 
-## [Unreleased]
+## [0.3.0] - 2026-11-13
+
+The command line is reorganised into real sub-commands and the package gets a working Python API. Both change how polybind
+is called, hence the minor release (while the major version is 0, a minor release may break). To migrate, write
+`polybind gen INPUT.pyi` where you wrote `polybind INPUT.pyi`; the dependency and settings files are unchanged.
 
 ### Changed (breaking)
 
@@ -22,10 +26,15 @@ the settings files).
   failed from the parent directory). The API is now in `polybind/__init__.py`, imported on first use so that
   `import polybind` stays cheap. The root `__init__.py` and the unused `requirements.txt` are gone; the test tools are the
   `test` extra of `pyproject.toml`, and CI runs `ctest` like a local checkout does.
-
 - **`python.version-command` may print more than the number.** `python -m httpp --version` prints `httpp 0.8.1`, which the
   resolver took as the version and refused (`>=0.8,<0.9` not satisfied). The version is now the first plain number of the
   first line.
+
+### Notes
+
+- Checked on Linux with Python 3.12 and CMake 3.21, 3.28, 3.31 and 4.4 (the resolver runs on all of them). Windows, macOS and
+  Python 3.8 to 3.11 have not been run locally; CI runs Python 3.11 on Linux.
+- `bundle` and `[[gen.stubs]]` are still not done (see 0.2.0).
 
 ## [0.2.0] - 2026-11-12
 
@@ -77,4 +86,5 @@ dependencies, and the requirements of a project in one place. The design is in `
 - `bundle` (shipping a dependency's shared library inside the wheel) and `[[gen.stubs]]` are not done.
 - 0.1.0 on PyPI has no build plugin: use 0.2.0 or later in `[build-system].requires`.
 
+[0.3.0]: https://github.com/mohammadraziei/polybind/releases/tag/v0.3.0
 [0.2.0]: https://github.com/mohammadraziei/polybind/releases/tag/v0.2.0

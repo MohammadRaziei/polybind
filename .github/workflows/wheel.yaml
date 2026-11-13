@@ -62,8 +62,10 @@ jobs:
         with:
           python-version: "3.11"
 
+      # The wheel that was just built, by path, with its `test` extra. `--find-links` + the name would let pip take the
+      # same version from PyPI (a release that is already published, without this extra) instead of this build.
       - name: Install wheel
-        run: pip install --upgrade --find-links ./dist/ "polybind[test]"
+        run: pip install "$(ls dist/polybind-*.whl)[test]"
 
       - name: test polybind installation 
         run: polybind -h
