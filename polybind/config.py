@@ -17,6 +17,10 @@ The command line wins over both. Example ``polybind.toml``::
     prefix = "HTTPP_"
     tag-format = "v%s"
 
+    [[version.sync]]                    # a file that repeats the version
+    file = "Cargo.toml"
+    regex = '(?m)^version = "(?P<version>[^"]*)"'
+
 Top level: ``schema`` (``1``), and the sections ``version`` (checked key by key), ``wrap``,
 ``deps`` and ``optional-deps`` (checked by :mod:`polybind.deps`).
 
@@ -30,6 +34,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -42,11 +47,14 @@ SCHEMA_VERSION = 1
 
 # section -> allowed keys (None: checked elsewhere)
 SCHEMA: dict[str, set[str] | None] = {
-    "version": {"file", "prefix", "tag-format"},
+    "version": {"file", "prefix", "tag-format", "sync"},
     "wrap": None,
     "deps": None,
     "optional-deps": None,
 }
+
+
+SYNC_KEYS = {"file", "regex", "expect"}
 
 
 class ConfigError(PolybindError):
@@ -96,6 +104,29 @@ def unknown_key(kind: str, name: str, allowed: set[str], origin: str) -> ConfigE
     return ConfigError(f"{origin}: unknown {kind} '{name}'{more}")
 
 
+def _validate_sync(value: Any, origin: str) -> None:
+    """``[[version.sync]]``: files that repeat the version, each a ``file`` and a ``regex``."""
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        raise ConfigError(f"{origin}: version.sync must be an array of tables ([[version.sync]])")
+    for number, item in enumerate(value, 1):
+        where = f"{origin}: version.sync #{number}"
+        for key in item:
+            if key not in SYNC_KEYS:
+                raise unknown_key("key", f"version.sync.{key}", {f"version.sync.{k}" for k in SYNC_KEYS}, origin)
+        for key in ("file", "regex"):
+            if not isinstance(item.get(key), str) or not item[key]:
+                raise ConfigError(f"{where}: '{key}' is required and must be a string")
+        expect = item.get("expect", 1)
+        if isinstance(expect, bool) or not isinstance(expect, int) or expect < 1:
+            raise ConfigError(f"{where}: 'expect' must be an integer >= 1")
+        try:
+            pattern = re.compile(item["regex"])
+        except re.error as exc:
+            raise ConfigError(f"{where}: 'regex' does not compile: {exc}") from None
+        if "version" not in pattern.groupindex:
+            raise ConfigError(f"{where}: 'regex' needs the named group (?P<version>...) around the version")
+
+
 def validate(data: dict[str, Any], origin: str) -> None:
     for section, body in data.items():
         if section == "schema":
@@ -112,7 +143,9 @@ def validate(data: dict[str, Any], origin: str) -> None:
         for key, value in body.items():
             if key not in allowed:
                 raise unknown_key("key", f"{section}.{key}", {f"{section}.{k}" for k in allowed}, origin)
-            if not isinstance(value, str):
+            if section == "version" and key == "sync":
+                _validate_sync(value, origin)
+            elif not isinstance(value, str):
                 raise ConfigError(f"{origin}: {section}.{key} must be a string")
 
 

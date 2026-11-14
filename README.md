@@ -14,7 +14,7 @@
 
 | command | what it does |
 |---|---|
-| `polybind version` | show, change and tag the project version (header, `pyproject.toml`, git tags) |
+| `polybind version` | show, change and tag the project version (header, `pyproject.toml`, git tags) and keep the files that repeat it in step |
 | `polybind deps` | declare, resolve, lock and install the native dependencies of a project |
 | `polybind config` | print the effective settings and where each one came from |
 | `polybind cmake-dir` | print the directory of `PolybindDeps.cmake` for `include()` |
@@ -322,7 +322,8 @@ Exit codes: 0 success, 1 a check did not pass (`version check`), 2 a problem you
 polybind version                  # show X.Y.Z
 polybind version minor +          # minor += 1  (also: -, +N, -N, N)
 polybind version tag create minor # bump, commit the version file, tag vX.Y.Z
-polybind version check            # exit 1 if the version is not the latest git tag
+polybind version sync             # write the version into the [[version.sync]] files
+polybind version check            # exit 1 if a [[version.sync]] file or the latest git tag differs
 polybind config                   # show the effective settings
 polybind deps validate            # check settings, dependencies and polybind.lock
 polybind deps list [--json]       # the dependencies with every default filled in
@@ -332,6 +333,17 @@ polybind deps install [--all]     # build + runtime requirements of pyproject.to
 
 The version lives in a header with `#define <PREFIX>VERSION_MAJOR|MINOR|PATCH <N>` or in the
 static `version` of `pyproject.toml`; it is detected, or set explicitly.
+
+Files that cannot read it (`Cargo.toml`, `build.zig.zon`, a README snippet) are listed as `[[version.sync]]`: a `file`
+and a `regex` with the named group `(?P<version>...)`, nothing else. Every command that writes the version writes
+them too, `tag create` commits them, `check` compares them. A regex that stops matching is an error, and then no file
+changes (details: `spec.md`, 4.2):
+
+```toml
+[[tool.polybind.version.sync]]
+file = "Cargo.toml"
+regex = '(?m)^version = "(?P<version>[^"]*)"'
+```
 
 Settings go in `polybind.toml` or in `[tool.polybind]` of `pyproject.toml` (same keys); the command
 line wins over `polybind.toml`, which wins over pyproject:

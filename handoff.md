@@ -20,6 +20,7 @@ Repo: `github.com/mohammadraziei/polybind` (cloned in chat, **nothing was pushed
 | `wrap`: `polybind wrap INPUT.pyi` (was `gen`) | `polybind/core.py`, `wrap.py` | `tests/test_core.py`, `test_cli.py` |
 | the command line: one root parser, `-h` everywhere, exit codes, `PolybindError` | `polybind/cli.py`, `errors.py`, `__main__.py` | `tests/test_cli.py` (`TestCommandLine`) |
 | `polybind version ...` (version in a header or pyproject, git tags, `check`) | `polybind/version.py` | `tests/test_version.py` |
+| `[[version.sync]]`: files that repeat the version (a `file` and a `regex`; spec 4.2), `polybind version sync` | `polybind/version.py`, `config.py` | `tests/test_version_sync.py` |
 | settings: `polybind.toml` + `[tool.polybind]`, `schema = 1`, dashes in keys, unknown-key hints | `polybind/config.py` | `tests/test_config.py` |
 | `[deps.<name>]`, `[optional-deps.<group>.<name>]`: model, defaults, validation, requirements, `deps validate|list|requirements|export|record|install` | `polybind/deps.py` | `tests/test_deps.py` |
 | `polybind.lock` (tag, provider, optional commit), reader/writer | `polybind/lock.py` | `tests/test_lock.py` |

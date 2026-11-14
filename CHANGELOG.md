@@ -6,6 +6,19 @@ the settings files).
 
 ## [Unreleased]
 
+### Added
+
+- **`[[version.sync]]`: files that repeat the version.** `Cargo.toml`, `build.zig.zon`, a Julia `Project.toml` or the
+  install snippets of a README cannot read the version from the header. Each is a table with a `file` and a `regex` that has
+  the named group `(?P<version>...)` (and an optional `expect`, the number of matches, default 1); there are no presets
+  and no file kinds. Commands that write the version (`major|minor|patch VALUE`, `tag set`, `tag create`) write these files
+  too, `tag create` commits them with the source, and the new `polybind version sync` writes them without changing the
+  source. `polybind version check` compares every file with the source (one line per file that differs, exit 1) and then
+  with the latest tag. All files are planned before one is written: a regex that stopped matching, or a file that is
+  missing, is an error (exit 2) and nothing changes, the source included. Only the text of the group is replaced, line
+  endings stay. Spec 4.2. Measured on ctoon's real tree: `polybind version minor +` with four tables gives the same files as
+  its `version.py`.
+
 ### Changed (breaking)
 
 - **`polybind gen` is now `polybind wrap`.** `gen` did not say what it makes: the input is a `.pyi` stub, the output is one

@@ -11,6 +11,10 @@ One source of truth per project, either
 Settings (``--file``, ``--prefix``, ``--tag-format``) can live in ``polybind.toml`` or
 ``[tool.polybind.version]`` of pyproject.toml; see :mod:`polybind.config`.
 
+Files that must repeat the version (``Cargo.toml``, ``build.zig.zon``, README snippets, ...) are listed as
+``[[version.sync]]`` tables, each a ``file`` and a ``regex`` with the named group ``(?P<version>...)``; every
+command that writes the version writes them too.
+
 Usage::
 
     polybind version                    show X.Y.Z
@@ -22,7 +26,8 @@ Usage::
     polybind version tag                show the latest git tag
     polybind version tag set            set the version from the latest tag
     polybind version tag create [what]  commit and tag (major|minor|patch|X.Y.Z)
-    polybind version check              exit 1 if the version is not the latest tag
+    polybind version sync               write the version into the [[version.sync]] files
+    polybind version check              exit 1 if a [[version.sync]] file or the latest tag differs
 """
 
 from __future__ import annotations
@@ -40,6 +45,8 @@ from polybind.config import load_config
 from polybind.errors import PolybindError
 
 if TYPE_CHECKING:
+    from polybind.config import Config
+
     Source = "HeaderSource | PyprojectSource"
 
 PARTS = ("major", "minor", "patch")
@@ -190,6 +197,95 @@ class PyprojectSource:
 
 
 
+# ---------------------------------------------------------------------------
+# Files that repeat the version: [[version.sync]]
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SyncTarget:
+    """One ``[[version.sync]]`` table: a file and a regex with the named group ``version``."""
+
+    file: str
+    regex: re.Pattern[str]
+    expect: int = 1
+
+
+def sync_targets(config: Config) -> list[SyncTarget]:
+    tables = config.get("version", "sync", [])
+    return [SyncTarget(t["file"], re.compile(t["regex"]), t.get("expect", 1)) for t in tables]
+
+
+def _sync_text(root: Path, file: str) -> str:
+    path = root / file
+    if not path.is_file():
+        raise VersionError(f"file not found: {path} (version.sync)")
+    return path.read_bytes().decode("utf-8")  # bytes, so line endings survive
+
+
+def _sync_matches(target: SyncTarget, text: str) -> list[re.Match[str]]:
+    found = list(target.regex.finditer(text))
+    if len(found) != target.expect:
+        raise VersionError(
+            f"{target.file}: the regex {target.regex.pattern!r} matched {len(found)} time(s), "
+            f"expected {target.expect} (version.sync)"
+        )
+    for match in found:
+        if match.start("version") < 0:
+            raise VersionError(
+                f"{target.file}: the group 'version' of {target.regex.pattern!r} did not take part in a match"
+            )
+    return found
+
+
+def plan_sync(root: Path, targets: list[SyncTarget], version: Version) -> dict[Path, str]:
+    """The new text of every file that has to change. Nothing is written, so a failing table changes no file."""
+    texts: dict[Path, str] = {}
+    original: dict[Path, str] = {}
+    for target in targets:
+        path = root / target.file
+        if path not in texts:
+            original[path] = texts[path] = _sync_text(root, target.file)
+        text = texts[path]
+        for match in reversed(_sync_matches(target, text)):
+            start, end = match.span("version")
+            text = text[:start] + str(version) + text[end:]
+        texts[path] = text
+    return {path: text for path, text in texts.items() if text != original[path]}
+
+
+def write_plan(plan: dict[Path, str]) -> None:
+    for path, text in plan.items():
+        path.write_bytes(text.encode("utf-8"))
+
+
+def check_sync(root: Path, targets: list[SyncTarget], version: Version) -> list[str]:
+    """One line per match that holds another version than ``version``."""
+    problems: list[str] = []
+    for target in targets:
+        for match in _sync_matches(target, _sync_text(root, target.file)):
+            value = match.group("version")
+            if value != str(version):
+                problems.append(f"{target.file}: {value} (expected {version})")
+    return problems
+
+
+def sync_files(root: Path, targets: list[SyncTarget]) -> list[Path]:
+    files: list[Path] = []
+    for target in targets:
+        path = root / target.file
+        if path not in files:
+            files.append(path)
+    return files
+
+
+def _show(root: Path, path: Path) -> str:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
 def _header_candidates(root: Path) -> list[Path]:
     found: list[Path] = []
     for base, pattern in ((root / "include", "**/*"), (root, "*")):
@@ -315,17 +411,49 @@ def cmd_show(args: argparse.Namespace, source: Source) -> int:
     return 0
 
 
+def _write_everywhere(args: argparse.Namespace, source: Source, version: Version, done: str, dry: str) -> None:
+    """Write ``version`` to the source and every sync file; with ``--dry-run`` only say what would change.
+
+    The sync files are planned first, so a table that fails (a regex that no longer matches) stops the command
+    before the source or any other file is touched.
+    """
+    plan = plan_sync(args.root, args.sync, version)
+    if args.dry_run:
+        print(f"{dry} {version}")
+        for path in plan:
+            print(f"Would update {_show(args.root, path)}")
+        return
+    source.write(version)
+    write_plan(plan)
+    print(f"{done} {version}")
+    for path in plan:
+        print(f"Updated {_show(args.root, path)}")
+
+
 def cmd_part(args: argparse.Namespace, source: Source) -> int:
     version = source.read()
     if args.value is None:
         print(version.get(args.part))
         return 0
     apply_value(version, args.part, args.value)
-    if args.dry_run:
-        print(f"Would update version to {version}")
+    _write_everywhere(args, source, version, "Version updated to", "Would update version to")
+    return 0
+
+
+def cmd_sync(args: argparse.Namespace, source: Source) -> int:
+    version = source.read()
+    if not args.sync:
+        print("no [[version.sync]] files are configured")
         return 0
-    source.write(version)
-    print(f"Version updated to {version}")
+    plan = plan_sync(args.root, args.sync, version)
+    if not plan:
+        print(f"{len(sync_files(args.root, args.sync))} file(s) already at {version}")
+        return 0
+    verb = "Would update" if args.dry_run else "Updated"
+    if not args.dry_run:
+        write_plan(plan)
+    for path in plan:
+        print(f"{verb} {_show(args.root, path)}")
     return 0
 
 
@@ -343,11 +471,7 @@ def cmd_tag(args: argparse.Namespace, source: Source) -> int:
         if not tag:
             raise VersionError("No git tags found")
         version = parse_tag(tag, args.tag_format)
-        if args.dry_run:
-            print(f"Would set version from tag to {version}")
-            return 0
-        source.write(version)
-        print(f"Version set from tag -> {version}")
+        _write_everywhere(args, source, version, "Version set from tag ->", "Would set version from tag to")
         return 0
 
     # create
@@ -355,13 +479,18 @@ def cmd_tag(args: argparse.Namespace, source: Source) -> int:
     name = tag_name(version, args.tag_format)
     if _git(root, "rev-parse", "-q", "--verify", f"refs/tags/{name}", check=False).returncode == 0:
         raise VersionError(f"tag {name} already exists")
+    paths = [str(source.path), *map(str, sync_files(root, args.sync))]
     if args.dry_run:
-        print(f"Would write {version} to {source.path}, commit it and tag {name}")
+        plan = plan_sync(root, args.sync, version)
+        print(f"Would write {version} to {', '.join(_show(root, Path(p)) for p in paths)}, commit them and tag {name}")
+        for path in plan:
+            print(f"Would update {_show(root, path)}")
         return 0
+    plan = plan_sync(root, args.sync, version)
     source.write(version)
-    path = str(source.path)
-    _git(root, "add", "--", path)
-    _git(root, "commit", "--allow-empty", "-m", f"Release {version}", "--", path)
+    write_plan(plan)
+    _git(root, "add", "--", *paths)
+    _git(root, "commit", "--allow-empty", "-m", f"Release {version}", "--", *paths)
     _git(root, "tag", name)
     print(f"Committed and tagged {name}")
     return 0
@@ -369,6 +498,10 @@ def cmd_tag(args: argparse.Namespace, source: Source) -> int:
 
 def cmd_check(args: argparse.Namespace, source: Source) -> int:
     version = source.read()
+    status = 0
+    for problem in check_sync(args.root, args.sync, version):
+        print(problem, file=sys.stderr)
+        status = 1
     tag = git_last_tag(args.root)
     if not tag:
         print("No git tags found", file=sys.stderr)
@@ -377,8 +510,9 @@ def cmd_check(args: argparse.Namespace, source: Source) -> int:
     if tagged != version:
         print(f"version {version} does not match latest tag {tag}", file=sys.stderr)
         return 1
-    print(f"version {version} matches tag {tag}")
-    return 0
+    if status == 0:
+        print(f"version {version} matches tag {tag}")
+    return status
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +557,7 @@ def _run(args: argparse.Namespace) -> int:
         file = Path(config.get("version", "file"))
     prefix = args.prefix if args.prefix is not None else config.get("version", "prefix")
     args.tag_format = args.tag_format or config.get("version", "tag-format") or DEFAULT_TAG_FORMAT
+    args.sync = sync_targets(config)
     return int(args.handler(args, detect_source(args.root, file, prefix)))
 
 
@@ -458,6 +593,10 @@ def add_parser(subs: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
     for p in tag_subs.choices.values():
         _add_common(p, sub=True)
 
-    check = subs.add_parser("check", help="exit 1 when the version is not the latest tag")
+    sync = subs.add_parser("sync", help="write the version into the [[version.sync]] files")
+    _add_common(sync, sub=True)
+    sync.set_defaults(handler=cmd_sync)
+
+    check = subs.add_parser("check", help="exit 1 when a [[version.sync]] file or the latest tag differs")
     _add_common(check, sub=True)
     check.set_defaults(handler=cmd_check)

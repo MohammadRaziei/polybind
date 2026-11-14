@@ -87,6 +87,47 @@ Rules: writing changes only the number, never comments or other tables; `tag cre
 
 Measured: real isolated builds with pypa/build (pip installs polybind from a local wheel) with both backends give `demo-1.2.3`, for a header with `1.2.3`; hatch's own build and `set_version` are covered by `tests/test_metadata.py`. Linux only.
 
+### 4.2 Files that must repeat the version: `[[version.sync]]` **[done]**
+
+Some files cannot read the version from the source: `Cargo.toml`, `build.zig.zon`, a Julia `Project.toml`, the install snippets of a README. Each one is a table of `[[version.sync]]` (in `[[tool.polybind.version.sync]]` of `pyproject.toml`, or `[[version.sync]]` of `polybind.toml`). There are no presets and no file kinds: a file and a regex, nothing else.
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `file` | string | required | path from the project root |
+| `regex` | string | required | Python `re` syntax; must have the named group `(?P<version>...)` around the version text |
+| `expect` | integer >= 1 | `1` | how many times the regex must match in the file |
+
+Rules:
+
+1. No flags are added: write `(?m)` for `^` and `$` per line, `(?s)` for `.` across lines.
+2. Writing replaces only the text of the `version` group, in every match. Everything else in the file stays byte for byte (line endings too).
+3. A match count other than `expect` is an error (exit 2), a file that does not exist too: a regex that stopped matching must not let a file drift. The same file may appear in several tables (a README with two snippets); each regex sees the text the one before it wrote.
+4. All files are planned before one is written: when one table fails, no file changes, the version source included.
+5. The value written is the version itself (`X.Y.Z`), whatever is around it in the file.
+6. A bad table (unknown key, missing `file` or `regex`, a regex that does not compile, no `version` group, `expect` below 1) is a settings error that names the table (its number) and the key.
+
+Commands: `polybind version sync` writes the current version into every table (without changing the source). `major|minor|patch VALUE`, `tag set` and `tag create` write the source and then every table. `tag create` stages and commits the source and every file of a table, and nothing else. `check` also compares every table with the source and exits 1 with one line per file that differs (`README.md: 0.8.0 (expected 0.9.0)`), then compares with the latest tag as before. `--dry-run` lists the files that would change.
+
+Example, the four files of ctoon:
+
+```toml
+[[tool.polybind.version.sync]]
+file = "Cargo.toml"
+regex = '(?m)^version = "(?P<version>[^"]*)"'
+
+[[tool.polybind.version.sync]]
+file = "build.zig.zon"
+regex = '\.version = "(?P<version>[^"]*)",'
+
+[[tool.polybind.version.sync]]
+file = "src/bindings/julia/Project.toml"
+regex = '(?m)^version = "(?P<version>[^"]*)"'
+
+[[tool.polybind.version.sync]]
+file = "README.md"
+regex = '(?m)^[ \t]*GIT_TAG[ \t]+v(?P<version>\d+\.\d+\.\d+)[ \t]*$'
+```
+
 ## 5. Dependencies: `[deps.<name>]` **[decided]** unless tagged
 
 A dependency is a native library with a CMake package, usually also a pip package. `<name>` matches `[A-Za-z0-9][A-Za-z0-9._-]*`.
