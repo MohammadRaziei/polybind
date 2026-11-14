@@ -4,7 +4,7 @@ All notable changes to polybind. The format follows [Keep a Changelog](https://k
 version numbers follow [Semantic Versioning](https://semver.org/) (while the major version is 0, a minor release may change
 the settings files).
 
-## [Unreleased]
+## [0.4.0] - 2026-11-15
 
 ### Added
 

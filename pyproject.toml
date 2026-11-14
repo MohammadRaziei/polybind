@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "polybind"
-version = "0.3.0"
+version = "0.4.0"
 description = "Helper for hybrid C++/Python projects: one project version, native dependencies, and type-dispatching Python classes from .pyi stubs"
 readme = "README.md"
 license = { text = "MIT" }
