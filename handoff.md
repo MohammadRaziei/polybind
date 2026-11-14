@@ -17,7 +17,7 @@ Repo: `github.com/mohammadraziei/polybind` (cloned in chat, **nothing was pushed
 
 | piece | files | tests |
 |---|---|---|
-| `gen`: `polybind gen INPUT.pyi` | `polybind/core.py`, `gen.py` | `tests/test_core.py`, `test_cli.py` |
+| `wrap`: `polybind wrap INPUT.pyi` (was `gen`) | `polybind/core.py`, `wrap.py` | `tests/test_core.py`, `test_cli.py` |
 | the command line: one root parser, `-h` everywhere, exit codes, `PolybindError` | `polybind/cli.py`, `errors.py`, `__main__.py` | `tests/test_cli.py` (`TestCommandLine`) |
 | `polybind version ...` (version in a header or pyproject, git tags, `check`) | `polybind/version.py` | `tests/test_version.py` |
 | settings: `polybind.toml` + `[tool.polybind]`, `schema = 1`, dashes in keys, unknown-key hints | `polybind/config.py` | `tests/test_config.py` |
@@ -46,7 +46,7 @@ Verified in this chat: a real wheel built with `pip wheel .` contains `polybind/
 
 1. M4 is done (see the decisions above). Left over: Windows/macOS, scikit-build-core older than 1.1.2 (minimum unknown), no build-time group selection (section 6 option a), and 0.2.0 is not tagged or published yet.
 2. **M5 `bundle`**: `install(IMPORTED_RUNTIME_ARTIFACTS ...)` (CMake 3.21), licenses, RPATH `$ORIGIN` / `@loader_path` / Windows DLL directory, interplay with auditwheel/delocate/delvewheel (libspeech disables repair on Windows because delvewheel failed). Unverified.
-3. **M6 `[[gen.stubs]]`** for `gen` (input, output, module-name).
+3. **M6 `[[wrap.stubs]]`** for `wrap` (input, output, module-name).
 4. `polybind build`: undecided what it adds to `python -m build`; nothing written.
 5. Open questions (spec 14): group build requirements (a) selected at build time vs (b) never; lock format TOML vs JSON (TOML is implemented); `targets` default `<name>::<name>` (my guess); `runtime = true` requires the python provider (my rule); locked provider that cannot deliver: warning (implemented) vs error.
 6. Not run anywhere but **Linux, Python 3.12, CMake 4.4, uv 0.11, pip 26**: Windows, macOS, Python 3.8-3.11. A CI matrix is needed. `requires-python >= 3.8` is a claim, not a measurement.

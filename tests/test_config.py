@@ -97,7 +97,7 @@ def test_unknown_section_and_types(tmp_path: Path) -> None:
 
 
 def test_reserved_sections_pass_through(tmp_path: Path) -> None:
-    (tmp_path / "polybind.toml").write_text("[deps.liburlparser]\nversion-spec = '>=2'\n[gen]\nx = 1\n")
+    (tmp_path / "polybind.toml").write_text("[deps.liburlparser]\nversion-spec = '>=2'\n[wrap]\nx = 1\n")
     assert load_config(tmp_path).data["deps"]["liburlparser"]["version-spec"] == ">=2"
 
 

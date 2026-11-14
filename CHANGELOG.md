@@ -4,6 +4,19 @@ All notable changes to polybind. The format follows [Keep a Changelog](https://k
 version numbers follow [Semantic Versioning](https://semver.org/) (while the major version is 0, a minor release may change
 the settings files).
 
+## [Unreleased]
+
+### Changed (breaking)
+
+- **`polybind gen` is now `polybind wrap`.** `gen` did not say what it makes: the input is a `.pyi` stub, the output is one
+  Python class that stands for the C++ template variants (`Box__int32`, `Box__float64` become `Box`). The module is
+  `polybind/wrap.py` (was `gen.py`) and the settings section is `[wrap]` (was `[gen]`, reserved, no keys yet). To migrate,
+  write `polybind wrap INPUT.pyi` where you wrote `polybind gen INPUT.pyi`. `polybind INPUT.pyi` still gets the hint, now
+  pointing at `wrap`. The Python API (`PolybindGenerator`) is unchanged.
+- The one-line description in `polybind -h` and in `pyproject.toml` no longer says "wrappers for nanobind, pybind11 and
+  Cython" first: polybind is a helper for hybrid C++/Python projects (version, native dependencies) and `wrap` is one of its
+  commands. `polybind -h` and the README now list `version`, `deps`, `config`, `cmake-dir` first and `wrap` last.
+
 ## [0.3.0] - 2026-11-13
 
 The command line is reorganised into real sub-commands and the package gets a working Python API. Both change how polybind

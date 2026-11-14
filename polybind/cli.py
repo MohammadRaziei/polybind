@@ -4,11 +4,11 @@ polybind.cli
 The command line: one parser, one command per tool. Every tool lives in its own module and
 registers itself with ``add_parser``; this module only builds the root parser and runs.
 
-    polybind gen       :mod:`polybind.gen`      wrapper classes from C++ .pyi stubs
     polybind version   :mod:`polybind.version`  show, change and tag the project version
     polybind deps      :mod:`polybind.deps`     native dependencies
     polybind config    :mod:`polybind.config`   the effective settings
     polybind cmake-dir                          the directory of PolybindDeps.cmake
+    polybind wrap      :mod:`polybind.wrap`     one Python class for C++ template variants in a .pyi stub
 
 Exit codes: 0 success; 1 a check that did not pass (``version check``); 2 a problem the user
 can fix (bad input, missing file, invalid setting), printed as ``polybind: error: ...``;
@@ -52,12 +52,12 @@ def _cmake_dir(_args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    from polybind import config, deps, gen, version
+    from polybind import config, deps, version, wrap
 
     parser = argparse.ArgumentParser(
         prog="polybind",
-        description="A toolbox for hybrid C++/Python projects: wrappers for nanobind, pybind11\n"
-        "and Cython, one version for the whole project, native dependencies.",
+        description="Helper for hybrid C++/Python projects: one version for the whole project,\n"
+        "native dependencies, and a generator for type-dispatching Python classes.",
         formatter_class=functools.partial(
             argparse.RawDescriptionHelpFormatter, max_help_position=24
         ),
@@ -65,7 +65,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {_get_version()}")
     subs = parser.add_subparsers(title="commands", dest="command", required=True)
-    gen.add_parser(subs)
     version.add_parser(subs)
     deps.add_parser(subs)
     config.add_parser(subs)
@@ -74,11 +73,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the directory of PolybindDeps.cmake",
         description="Print the directory of PolybindDeps.cmake, for include() in CMakeLists.txt.",
     ).set_defaults(func=_cmake_dir)
+    wrap.add_parser(subs)
     return parser
 
 
 def _unknown_command(parser: argparse.ArgumentParser, argv: list[str]) -> str | None:
-    """A hint for a first word that is not a command (``polybind x.pyi`` was the old form of ``gen``)."""
+    """A hint for a first word that is not a command (``polybind x.pyi`` was the old form of ``wrap``)."""
     first = argv[0] if argv else ""
     if not first or first.startswith("-"):
         return None
@@ -87,7 +87,7 @@ def _unknown_command(parser: argparse.ArgumentParser, argv: list[str]) -> str | 
     if first in commands:
         return None
     if first.endswith(".pyi"):
-        return f"unknown command '{first}'; to generate wrappers run: polybind gen {first}"
+        return f"unknown command '{first}'; to wrap a stub run: polybind wrap {first}"
     close = difflib.get_close_matches(first, commands, n=1)
     hint = f"; did you mean '{close[0]}'?" if close else ""
     return f"unknown command '{first}'{hint} (choose from {', '.join(commands)})"

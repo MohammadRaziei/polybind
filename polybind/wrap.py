@@ -1,15 +1,17 @@
 """
-polybind.gen
-~~~~~~~~~~~~
-``polybind gen``: unified Python wrapper classes from C++ ``.pyi`` stub files (nanobind,
-pybind11 and Cython stubs). The generator itself is :mod:`polybind.core`.
+polybind.wrap
+~~~~~~~~~~~~~
+``polybind wrap``: one Python class per C++ template from a ``.pyi`` stub file. Classes named
+``Box__int32``, ``Box__float64`` become a single ``Box`` that dispatches on the argument types or on
+``dtypes=[...]``. The stub can come from nanobind, pybind11 or Cython. The generator itself is
+:mod:`polybind.core`.
 
 Usage::
 
-    polybind gen _novasvg.pyi
-    polybind gen _novasvg.pyi -o novasvg.py
-    polybind gen _novasvg.pyi --module-name novasvg --verbose
-    polybind gen _novasvg.pyi --dry-run
+    polybind wrap _novasvg.pyi
+    polybind wrap _novasvg.pyi -o novasvg.py
+    polybind wrap _novasvg.pyi --module-name novasvg --verbose
+    polybind wrap _novasvg.pyi --dry-run
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ def _print_summary(groups: list[Any], output_path: Path) -> None:
     print(f"\n{'─' * 52}\n")
 
 
-def cmd_gen(args: argparse.Namespace) -> int:
+def cmd_wrap(args: argparse.Namespace) -> int:
     from polybind.core import PolybindGenerator
 
     pyi_path: Path = args.pyi
@@ -78,12 +80,12 @@ def cmd_gen(args: argparse.Namespace) -> int:
 
 
 def add_parser(subs: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Register ``polybind gen``."""
+    """Register ``polybind wrap``."""
     p = subs.add_parser(
-        "gen",
-        help="generate Python wrapper classes from C++ .pyi stubs",
-        description="Generate unified Python wrapper classes from C++ .pyi stub files.\n"
-        "Supports nanobind, pybind11 and Cython stubs.",
+        "wrap",
+        help="one Python class for the C++ template variants in a .pyi stub",
+        description="Write one Python class for each group of C++ template variants in a .pyi stub\n"
+        "(Box__int32, Box__float64 -> Box). Works on stubs from nanobind, pybind11 and Cython.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent(__doc__.split("Usage::")[1]),
     )
@@ -99,4 +101,4 @@ def add_parser(subs: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
     )
     p.add_argument("--dry-run", action="store_true", help="print the generated code; write no file")
     p.add_argument("-v", "--verbose", action="store_true", help="print the groups and variants that were found")
-    p.set_defaults(func=cmd_gen)
+    p.set_defaults(func=cmd_wrap)

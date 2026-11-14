@@ -56,7 +56,7 @@ def test_import_works_from_the_parent_directory() -> None:
     assert out.stdout.strip() == "ok", out.stderr
 
 
-@pytest.mark.parametrize("name", ["cli", "config", "deps", "errors", "gen", "install", "lock", "metadata", "version"])
+@pytest.mark.parametrize("name", ["cli", "config", "deps", "errors", "install", "lock", "metadata", "version", "wrap"])
 def test_no_name_in_the_package_hides_a_submodule(name: str) -> None:
     # `from polybind import version` must give the module, not something `__init__` imported under that name
     module = importlib.import_module("polybind")

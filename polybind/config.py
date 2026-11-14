@@ -17,7 +17,7 @@ The command line wins over both. Example ``polybind.toml``::
     prefix = "HTTPP_"
     tag-format = "v%s"
 
-Top level: ``schema`` (``1``), and the sections ``version`` (checked key by key), ``gen``,
+Top level: ``schema`` (``1``), and the sections ``version`` (checked key by key), ``wrap``,
 ``deps`` and ``optional-deps`` (checked by :mod:`polybind.deps`).
 
 TOML is read with ``tomllib`` (Python 3.11+) or its backport ``tomli`` (``pip install tomli``,
@@ -43,7 +43,7 @@ SCHEMA_VERSION = 1
 # section -> allowed keys (None: checked elsewhere)
 SCHEMA: dict[str, set[str] | None] = {
     "version": {"file", "prefix", "tag-format"},
-    "gen": None,
+    "wrap": None,
     "deps": None,
     "optional-deps": None,
 }

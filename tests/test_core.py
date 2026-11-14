@@ -311,7 +311,7 @@ def _run_cli(*args: str) -> subprocess.CompletedProcess:
         "PYTHONPATH": str(_REPO_ROOT),
     }
     return subprocess.run(
-        [sys.executable, "-m", "polybind", "gen", *[str(a) for a in args]],
+        [sys.executable, "-m", "polybind", "wrap", *[str(a) for a in args]],
         capture_output=True,
         text=True,
         env=env,

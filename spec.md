@@ -22,7 +22,7 @@ Tools, each independent of the others and each reading the same settings:
 
 | tool | purpose | state |
 |---|---|---|
-| `gen` | wrapper generation from `.pyi` stubs | exists (`polybind gen INPUT.pyi`) |
+| `wrap` | one Python class per C++ template group from `.pyi` stubs | exists (`polybind wrap INPUT.pyi`; was `gen`, renamed) |
 | `version` | one source of truth for the project version, git tags | **[done]** |
 | settings | `polybind.toml` / `[tool.polybind]` | **[done]**, being revised (section 3) |
 | `deps` | native dependency declaration, resolution, lock | **[done]**: settings, lock, CMake resolver, record (M2, M3) |
@@ -59,7 +59,7 @@ Precedence, later wins, merged key by key: `[tool.polybind]` < `polybind.toml` <
 
 Key names use dashes (`tag-format`, `version-spec`), like pyproject and ruff. **[decided]**
 
-Top level keys: `schema` (integer, must be `1` when present), and the sections `version`, `gen`, `deps`, `optional-deps`. An unknown section or key is an error with a suggestion. **[done]** for the mechanism.
+Top level keys: `schema` (integer, must be `1` when present), and the sections `version`, `wrap`, `deps`, `optional-deps`. An unknown section or key is an error with a suggestion. **[done]** for the mechanism.
 
 sdist: `pyproject.toml` is always in an sdist; `polybind.toml` and `polybind.lock` must be listed (scikit-build-core: `sdist.include`), otherwise a build from the sdist loses its requirements. Putting everything in `[tool.polybind]` avoids this, except for `polybind.lock`.
 
@@ -299,11 +299,11 @@ Tested with real CMake, pip, uv 0.11 and git on Linux; see `tests/test_resolver.
 
 ## 11. Command line
 
-One parser (`polybind/cli.py`); every tool registers itself with `add_parser` in its own module. Rules: every command and sub-command has `-h`; `polybind` alone prints the help; there is no command-less form (`polybind INPUT.pyi` is an error that says `polybind gen INPUT.pyi`); a mistyped command is suggested; a problem the user can fix is a `PolybindError`, printed as `polybind: error: ...` with exit 2, and never a traceback. Exit codes: 0 success, 1 a check that did not pass, 2 user error, 3 a bug in the generator.
+One parser (`polybind/cli.py`); every tool registers itself with `add_parser` in its own module. Rules: every command and sub-command has `-h`; `polybind` alone prints the help; there is no command-less form (`polybind INPUT.pyi` is an error that says `polybind wrap INPUT.pyi`); a mistyped command is suggested; a problem the user can fix is a `PolybindError`, printed as `polybind: error: ...` with exit 2, and never a traceback. Exit codes: 0 success, 1 a check that did not pass, 2 user error, 3 a bug in the generator.
 
 | command | state |
 |---|---|
-| `polybind gen INPUT.pyi [options]` | **[done]**: was `polybind INPUT.pyi` |
+| `polybind wrap INPUT.pyi [options]` | **[done]**: was `polybind gen INPUT.pyi`, before that `polybind INPUT.pyi` |
 | `polybind cmake-dir` | **[done]** |
 | `polybind --version` | exists |
 | `polybind version ...` | **[done]** |
@@ -331,7 +331,7 @@ One parser (`polybind/cli.py`); every tool registers itself with `add_parser` in
 | M3 | CMake resolver with the python (uv, pip), fetch and system providers, `deps export`, `deps record`, `cmake-dir`; tests with local wheels and local git repositories **[done]** |
 | M4 | **[done]** the build plugin (7.2): a scikit-build-core dynamic-metadata provider, measured with pip and `python -m build` on Linux |
 | M5 | `bundle` |
-| M6 | `[[gen.stubs]]` for `gen` |
+| M6 | `[[wrap.stubs]]` for `wrap` |
 
 ## 14. Open questions
 

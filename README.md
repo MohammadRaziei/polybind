@@ -1,7 +1,8 @@
 # polybind
 
-> Auto-generate unified, type-safe Python wrappers for C++ template types —
-> from any `.pyi` stub file produced by **nanobind**, **pybind11**, or **Cython**.
+> Helper for hybrid C++/Python projects: one version for the whole project, native
+> dependencies, and a generator (`polybind wrap`) that turns C++ template variants from a
+> `.pyi` stub into one Python class.
 
 [![PyPI](https://img.shields.io/pypi/v/polybind)](https://pypi.org/project/polybind/)
 [![Python](https://img.shields.io/pypi/pyversions/polybind)](https://pypi.org/project/polybind/)
@@ -9,7 +10,21 @@
 
 ---
 
-## The problem
+## What is in the box
+
+| command | what it does |
+|---|---|
+| `polybind version` | show, change and tag the project version (header, `pyproject.toml`, git tags) |
+| `polybind deps` | declare, resolve, lock and install the native dependencies of a project |
+| `polybind config` | print the effective settings and where each one came from |
+| `polybind cmake-dir` | print the directory of `PolybindDeps.cmake` for `include()` |
+| `polybind wrap` | one Python class for the C++ template variants in a `.pyi` stub (the rest of this page) |
+
+Settings live in `polybind.toml` or `[tool.polybind]`; see `spec.md`.
+
+---
+
+## `polybind wrap`: the problem
 
 Every C++ binding tool forces you to expose each template specialisation as a
 separate class. For `Box<T>` you get:
@@ -34,7 +49,7 @@ p = _mylib.Pair__float64__int32(3.14, 5)
 Python users expect a **single** `Box` or `Pair` that dispatches on input
 types and where `isinstance(obj, Box)` works for all specialisations.
 
-## The solution
+## `polybind wrap`: the solution
 
 `polybind` reads the `.pyi` stub your binding tool already produces and
 generates a clean, fully-typed Python wrapper — no C++ changes needed.
@@ -130,8 +145,8 @@ cython --annotate mylib.pyx   # then use stubgen on the .so
 ### 3 — Run polybind
 
 ```bash
-polybind gen _mylib.pyi           # writes mylib.py next to the stub
-polybind gen _mylib.pyi -o src/mylib.py
+polybind wrap _mylib.pyi           # writes mylib.py next to the stub
+polybind wrap _mylib.pyi -o src/mylib.py
 ```
 
 ### 4 — Use the wrapper
@@ -228,16 +243,16 @@ for _t in Box._type_map_box.values():
 ## CLI reference
 
 ```
-usage: polybind [-h] [-o OUTPUT] [-m NAME] [--dry-run] [-v] INPUT.pyi
+usage: polybind wrap [-h] [-o OUTPUT.py] [-m NAME] [--dry-run] [-v] INPUT.pyi
 
 positional arguments:
-  INPUT.pyi             Path to the .pyi stub file
+  INPUT.pyi                 the .pyi stub file to process
 
 options:
-  -o, --output OUTPUT       Output .py file (default: INPUT.py, leading _ stripped)
-  -m, --module-name NAME    Override the C-extension import name
-  --dry-run                 Print generated code to stdout, write nothing
-  -v, --verbose             Show discovered groups and variants
+  -o, --output OUTPUT.py    output .py file (default: INPUT.py next to the stub, leading _ stripped)
+  -m, --module-name NAME    the C-extension module name used in the import statements
+  --dry-run                 print the generated code; write no file
+  -v, --verbose             print the groups and variants that were found
 ```
 
 ---

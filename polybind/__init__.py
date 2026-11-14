@@ -1,9 +1,9 @@
 """
 polybind
 ~~~~~~~~
-A toolbox for hybrid C++/Python projects: wrappers for nanobind, pybind11 and Cython
-stubs, one version for the whole project, native dependencies. The command line is
-``polybind -h``; this package is the Python API of the stub generator.
+Helper for hybrid C++/Python projects: one version for the whole project, native
+dependencies, and a generator for type-dispatching Python classes. The command line is
+``polybind -h``; this package is the Python API of the generator (``polybind wrap``).
 
 Quickstart::
 
