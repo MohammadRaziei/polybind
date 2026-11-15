@@ -32,9 +32,8 @@ version-spec = ">=2.2.0, <3"
 targets      = ["liburlparser::urlparser"]
 find-package = "liburlparser"
 python.module        = "liburlparser"
-python.module-cli    = true
-python.cmake-flag    = "--cmake-dir"
-python.version-command = "python -m {module} --version"
+python.commands.cmake-dir = "<PYTHON> -m <MODULE> --cmake-dir"
+python.commands.version   = "<PYTHON> -m <MODULE> --version"
 fetch.url            = "https://github.com/mohammadraziei/liburlparser.git"
 fetch.tag-format     = "v%s"
 fetch.build-options  = { BUILD_PYTHON = "OFF" }
@@ -44,7 +43,7 @@ version-spec      = ">=0.7,<0.8"
 targets           = ["httpp::httpp_core"]
 runtime           = true
 prefer-provider   = "python"
-python.cmake-flag = ["py", "--cmake-dir"]
+python.commands.cmake-dir = ["<PYTHON>", "-m", "httpp", "py", "--cmake-dir"]
 
 [deps.mbedtls]
 version-spec = ">=3.6,<4"
@@ -84,9 +83,9 @@ def test_everything_has_a_default() -> None:
 def test_empty_python_table_turns_the_provider_on_with_defaults() -> None:
     dep, _ = parse({"python": {}}, "my-lib")
     py = dep.python  # type: ignore[attr-defined]
-    assert (py.package, py.module, py.module_cli) == ("my-lib", "my_lib", True)
-    assert (py.cmake_flag, py.cmake_function) == (["--cmake-dir"], "")
-    assert py.version_command == ["python", "-m", "my_lib", "--version"]
+    assert (py.package, py.module) == ("my-lib", "my_lib")
+    assert py.cmake_dir_command == ["<PYTHON>", "-m", "my_lib", "--cmake-dir"]
+    assert py.version_command == ["<PYTHON>", "-m", "my_lib", "--version"]
     assert dep.providers == ["python"]  # type: ignore[attr-defined]
 
 
@@ -101,25 +100,24 @@ def test_fetch_defaults() -> None:
     assert dep.tag_format == "v%s"  # type: ignore[attr-defined]
 
 
-def test_module_cli_false_is_the_import_mode() -> None:
-    dep, _ = parse({"python": {"module-cli": False}})
-    py = dep.python  # type: ignore[attr-defined]
-    assert (py.cmake_flag, py.version_command, py.cmake_function) == ([], [], "get_cmake_dir")
-    dep, _ = parse({"python": {"module-cli": False, "cmake-function": "cmake_dir"}})
-    assert dep.python.cmake_function == "cmake_dir"  # type: ignore[attr-defined]
+def test_cmake_dir_command_is_written_out_whole() -> None:
+    # a module without a command line (nanobind, pybind11): the command is `<PYTHON> -c ...`, with no semicolon in it
+    command = ["<PYTHON>", "-c", "print(__import__('nanobind').cmake_dir())"]
+    dep, _ = parse({"python": {"commands": {"cmake-dir": command}}})
+    assert dep.python.cmake_dir_command == command  # type: ignore[attr-defined]
+    dep, _ = parse({"python": {"commands": {"cmake-dir": "<PYTHON> -m <MODULE> py --cmake-dir"}, "module": "m"}})
+    assert dep.python.cmake_dir_command == ["<PYTHON>", "-m", "m", "py", "--cmake-dir"]  # type: ignore[attr-defined]
 
 
 @pytest.mark.parametrize(
     ("python", "expected"),
     [
-        ({"module": "m"}, ["python", "-m", "m", "--version"]),
-        ({"module": "m", "version-command": ""}, []),
-        ({"module": "m", "version-command": "mbedtls --version"}, ["mbedtls", "--version"]),
-        ({"module": "m", "version-command": ["mbedtls-cli", "--version"]}, ["mbedtls-cli", "--version"]),
-        ({"module": "m", "version-command": "python -m {module} py --version"}, ["python", "-m", "m", "py", "--version"]),
-        ({"module": "m", "version-command": "'my tool' -V"}, ["my tool", "-V"]),
-        ({"module": "m", "module-cli": False}, []),
-        ({"module": "m", "module-cli": False, "version-command": "m-cli --version"}, ["m-cli", "--version"]),
+        ({"module": "m"}, ["<PYTHON>", "-m", "m", "--version"]),
+        ({"module": "m", "commands": {"version": ""}}, []),
+        ({"module": "m", "commands": {"version": "mbedtls --version"}}, ["mbedtls", "--version"]),
+        ({"module": "m", "commands": {"version": ["mbedtls-cli", "--version"]}}, ["mbedtls-cli", "--version"]),
+        ({"module": "m", "commands": {"version": "<PYTHON> -m <MODULE> py --version"}}, ["<PYTHON>", "-m", "m", "py", "--version"]),
+        ({"module": "m", "commands": {"version": "'my tool' -V"}}, ["my tool", "-V"]),
     ],
 )
 def test_version_command(python: dict[str, object], expected: list[str]) -> None:
@@ -134,7 +132,7 @@ def test_full_file(tmp_path: Path) -> None:
     assert url.version_spec == ">=2.2.0,<3"  # blanks removed
     assert url.fetch is not None and url.fetch.build_options == {"BUILD_PYTHON": "OFF"}
     assert url.providers == ["python", "fetch"]
-    assert deps.deps["httpp"].python.cmake_flag == ["py", "--cmake-dir"]  # type: ignore[union-attr]
+    assert deps.deps["httpp"].python.cmake_dir_command == ["<PYTHON>", "-m", "httpp", "py", "--cmake-dir"]  # type: ignore[union-attr]
     assert deps.deps["mbedtls"].bundle and deps.deps["mbedtls"].providers == ["fetch"]
     assert list(deps.groups["test"]) == ["liburlparser"]
     assert deps.groups["test"]["liburlparser"].group == "test"
@@ -160,14 +158,21 @@ def test_full_file(tmp_path: Path) -> None:
         ({"python": False}, "python must be a table"),
         ({"python": {"modul": "m"}}, "did you mean 'deps.x.python.module'"),
         ({"python": {"package": ""}}, "must not be empty"),
-        ({"python": {"cmake-flag": []}}, "list of non-empty strings"),
-        ({"python": {"cmake-function": "f"}}, "needs module-cli = false"),
-        ({"python": {"module-cli": False, "cmake-flag": "--x"}}, "cmake-flag needs module-cli = true"),
-        ({"python": {"version-flag": "--v"}}, "did you mean 'deps.x.python.version-command'"),
-        ({"python": {"version-command": []}}, "must be a command"),
-        ({"python": {"version-command": 3}}, "must be a command"),
-        ({"python": {"version-command": ["tool", ""]}}, "must be a command"),
-        ({"python": {"version-command": "tool 'unclosed"}}, "is not a command"),
+        ({"python": {"cmake-flag": "--x"}}, "python.cmake-flag was replaced by python.commands.cmake-dir"),
+        ({"python": {"cmake-function": "f"}}, "python.cmake-function was replaced by python.commands.cmake-dir"),
+        ({"python": {"module-cli": False}}, "python.module-cli was replaced by python.commands"),
+        ({"python": {"version-command": ""}}, "python.version-command was replaced by python.commands.version"),
+        ({"python": {"version-flag": "--v"}}, "python.version-flag was replaced by python.commands.version"),
+        ({"python": {"commands": 3}}, "python.commands must be a table"),
+        ({"python": {"commands": {"cmake_dir": "x"}}}, "did you mean 'deps.x.python.commands.cmake-dir'"),
+        ({"python": {"commands": {"cmake-dir": []}}}, "must be a command"),
+        ({"python": {"commands": {"cmake-dir": ""}}}, "must not be empty"),
+        ({"python": {"commands": {"version": []}}}, "must be a command"),
+        ({"python": {"commands": {"version": 3}}}, "must be a command"),
+        ({"python": {"commands": {"version": ["tool", ""]}}}, "must be a command"),
+        ({"python": {"commands": {"version": "tool 'unclosed"}}}, "is not a command"),
+        ({"python": {"commands": {"version": "python -m m --version"}}}, "write <PYTHON>"),
+        ({"python": {"commands": {"cmake-dir": ["python3", "-m", "m"]}}}, "write <PYTHON>"),
         ({"fetch": {}}, "fetch.url is required"),
         ({"fetch": {"url": ""}}, "must not be empty"),
         ({"fetch": {"url": "u", "tag-format": "v"}}, "must contain %s"),
@@ -351,7 +356,7 @@ def test_cli_list_json(project: Path, capsys: pytest.CaptureFixture[str]) -> Non
     assert run(project, "list", "--json") == 0
     data = json.loads(capsys.readouterr().out)
     assert [d["name"] for d in data] == ["liburlparser", "httpp", "mbedtls", "liburlparser"]
-    assert data[1]["python"]["cmake_flag"] == ["py", "--cmake-dir"]
+    assert data[1]["python"]["cmake_dir_command"] == ["<PYTHON>", "-m", "httpp", "py", "--cmake-dir"]
     assert data[2]["python"] is None and data[0]["fetch"]["build_options"] == {"BUILD_PYTHON": "OFF"}
 
 

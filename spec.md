@@ -186,14 +186,28 @@ A provider is **on only when its table exists**: any `python.*` key (or `python 
 |---|---|---|
 | `python.package` | the name | pip name |
 | `python.module` | package with `-` replaced by `_` | module name |
-| `python.module-cli` | `true` | the module answers `python -m <module> <cmake-flag>` |
-| `python.cmake-flag` | `"--cmake-dir"` | string or list of arguments; a list for `["py", "--cmake-dir"]` |
-| `python.version-command` | `"python -m <module> --version"` (with `module-cli = false`: `""`) | the command that prints the version: a string or a list; `""` reads the package metadata. A first word of `python` is the interpreter the resolver found (`{module}` is replaced by the module name); any other first word is a console script of the package, e.g. `"mbedtls-cli --version"`, looked for in the scripts directory of the install (`bin`, `Scripts` on Windows) and then on `PATH`. The version is the first plain number (a leading `v` dropped) of the first line it prints, so `0.8.1` and `httpp 0.8.1` (what argparse's `version=` prints) both give 0.8.1; when no word is a number, the last word is used as it is. A command that fails or prints nothing falls back to the package metadata |
-| `python.cmake-function` | `"get_cmake_dir"` | only with `module-cli = false` |
+| `python.commands.cmake-dir` | `"<PYTHON> -m <module> --cmake-dir"` | the command that prints the CMake directory: a string (split like a shell would) or a list of non-empty strings; **always the whole command** |
+| `python.commands.version` | `"<PYTHON> -m <module> --version"` | the command that prints the version, written the same way; `""` reads the package metadata |
 
-`module-cli = false`: setting `cmake-flag` is an error; the CMake dir is `python -c "import <module>; print(<module>.<cmake-function>())"` and the version comes from the package metadata unless `version-command` names a command (a console script, say). Known conventions: httpp and pybind11 use `get_cmake_dir`, nanobind uses `cmake_dir`.
+Rules of a command:
 
-Verified in httpp's source: `python -m httpp --cmake-dir` does not exist; the CMake dir is printed by `python -m httpp py --cmake-dir`. libspeech reads it with `httpp.get_cmake_dir()` today.
+1. `<PYTHON>` in a word is the interpreter the resolver found (`POLYBIND_DEPS_PYTHON`, or the one it searched for), `<MODULE>` is the module name. Nothing else is replaced. There is no special first word: a first word of `python`, `python3` or `py` is an error that says to write `<PYTHON>` (it would run another interpreter than the one the package was installed for).
+2. A command whose first word is not `<PYTHON>` starts a console script of the package, e.g. `"mbedtls-cli --version"`: it is looked for in the scripts directory of the install (`bin`, `Scripts` on Windows) and then on `PATH`.
+3. The command runs with the install directory in front of `PYTHONPATH`. It has no `;` in it (a `;` would split the argument: CMake list).
+4. The version is the first plain number (a leading `v` dropped) of the first line the command prints, so `0.8.1` and `httpp 0.8.1` (what argparse's `version=` prints) both give 0.8.1; when no word is a number, the last word is used as it is. A version command that fails or prints nothing falls back to the package metadata (a module without a command line needs no setting for that); a CMake-dir command that fails means the package is not usable.
+
+A module without a command line (nanobind, pybind11) names the command that prints its directory:
+
+```toml
+[deps.nanobind.python]
+commands.cmake-dir = ["<PYTHON>", "-c", "print(__import__('nanobind').cmake_dir())"]
+```
+
+httpp: `commands.cmake-dir = "<PYTHON> -m httpp py --cmake-dir"` (`python -m httpp --cmake-dir` does not exist). Known conventions: httpp and pybind11 print the directory with `get_cmake_dir()`, nanobind with `cmake_dir()`.
+
+The keys of 0.3.0 (`module-cli`, `cmake-flag`, `cmake-function`, `version-command`, `version-flag`) are errors that name the key that replaced them.
+
+Verified in httpp's source: `python -m httpp --cmake-dir` does not exist; the CMake dir is printed by `python -m httpp py --cmake-dir`. libspeech reads it with `commands.cmake-dir` of this table.
 
 ### 5.5 fetch provider
 

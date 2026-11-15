@@ -4,6 +4,23 @@ All notable changes to polybind. The format follows [Keep a Changelog](https://k
 version numbers follow [Semantic Versioning](https://semver.org/) (while the major version is 0, a minor release may change
 the settings files).
 
+## [0.5.0] - 2026-11-15
+
+### Changed (breaking)
+
+- **`python.commands.cmake-dir` and `python.commands.version` replace `python.module-cli`, `python.cmake-flag`,
+  `python.cmake-function` and `python.version-command`.** Three ways to ask a package something (arguments after
+  `python -m <module>`, a function call, a whole command) became one: a command, written out whole, as a string or a list.
+  `<PYTHON>` in it is the interpreter the resolver found and `<MODULE>` the module name; a first word that is not `<PYTHON>`
+  is a console script of the package (it was `python` before, which could not be told from another interpreter, so a first
+  word of `python`, `python3` or `py` is now an error). Defaults are what `module-cli = true` did: `<PYTHON> -m <MODULE>
+  --cmake-dir` and `<PYTHON> -m <MODULE> --version`; `commands.version = ""` still reads the package metadata, and a version
+  command that fails still falls back to it. The old keys are errors that name the key that replaced them. To migrate:
+  `cmake-flag = ["py", "--cmake-dir"]` of httpp is `commands.cmake-dir = "<PYTHON> -m httpp py --cmake-dir"`; a module
+  without a command line (`module-cli = false`) writes `commands.cmake-dir = ["<PYTHON>", "-c", "print(__import__('nanobind').cmake_dir())"]`
+  (no `;` in a command). The CMake side reads `cmake_dir_command` and `version_command` of `polybind deps list --json` instead
+  of `module_cli`, `cmake_flag` and `cmake_function`. Spec 5.4.
+
 ## [0.4.0] - 2026-11-15
 
 ### Added

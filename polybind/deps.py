@@ -53,7 +53,17 @@ DEP_KEYS = {
     "description", "version-spec", "targets", "find-package", "optional", "prefer-provider",
     "runtime", "buildtime", "bundle", "python", "fetch",
 }
-PYTHON_KEYS = {"package", "module", "module-cli", "cmake-flag", "version-command", "cmake-function"}
+PYTHON_KEYS = {"package", "module", "commands"}
+COMMAND_KEYS = {"cmake-dir", "version"}
+# Keys of 0.3.0 and the one that replaced each: the error says what to write instead of "unknown key".
+RENAMED_PYTHON_KEYS = {
+    "module-cli": "python.commands: a command is always written out (the default is `<PYTHON> -m <MODULE> --cmake-dir`)",
+    "cmake-flag": 'python.commands.cmake-dir, the whole command (for example "<PYTHON> -m httpp py --cmake-dir")',
+    "cmake-function": 'python.commands.cmake-dir, the whole command (for example ["<PYTHON>", "-c", "print(__import__(\'nanobind\').cmake_dir())"])',
+    "version-command": "python.commands.version",
+    "version-flag": "python.commands.version",
+}
+_INTERPRETER_WORDS = {"python", "python3", "py"}
 FETCH_KEYS = {"url", "tag-format", "build-options"}
 
 
@@ -61,12 +71,11 @@ FETCH_KEYS = {"url", "tag-format", "build-options"}
 class PythonProvider:
     package: str
     module: str
-    module_cli: bool
-    cmake_flag: list[str]
-    # The command that prints the version; [] = read it from the package metadata. A first word of `python` stands for
-    # the interpreter the resolver found, any other first word is a console script of the package.
+    # The command that prints the CMake directory. `<PYTHON>` in it stands for the interpreter the resolver found; a command
+    # without it is a console script of the package (looked for in the install's scripts directory, then on PATH).
+    cmake_dir_command: list[str]
+    # The command that prints the version; [] = read it from the package metadata. The same rules as cmake_dir_command.
     version_command: list[str]
-    cmake_function: str  # "" unless module_cli is false
 
 
 @dataclass
@@ -155,42 +164,47 @@ def _check_spec(spec: str, table: _Table) -> None:
             raise table.error("version-spec", f"has an invalid item '{item.strip()}' (an operator and a plain number, e.g. '>=2.2.0,<3')")
 
 
-def _version_command(t: _Table, module: str, module_cli: bool) -> list[str]:
-    """`python.version-command`: a string (split like a shell would) or a list; "" reads the package metadata."""
-    if not t.has("version-command"):
-        return ["python", "-m", module, "--version"] if module_cli else []
-    value = t.data["version-command"]
+def _command(t: _Table, key: str, module: str, default: list[str], *, empty: bool = False) -> list[str]:
+    """`python.commands.<key>`: a string (split like a shell would) or a list. `<MODULE>` is the module name, `<PYTHON>` stays
+    for the resolver. `""` is allowed only where `empty` is true: it means "read the package metadata" (the version)."""
+    if not t.has(key):
+        return list(default)
+    value = t.data[key]
     if isinstance(value, str):
         try:
             words = shlex.split(value)
         except ValueError as exc:
-            raise t.error("version-command", f"is not a command ({exc})") from exc
+            raise t.error(key, f"is not a command ({exc})") from exc
+        if not words and not empty:
+            raise t.error(key, "must not be empty")
+        if not words:
+            return []
     elif isinstance(value, list) and value and all(isinstance(v, str) and v for v in value):
         words = list(value)
     else:
-        raise t.error("version-command", 'must be a command (a string or a list of non-empty strings), or "" for the package metadata')
-    return [word.replace("{module}", module) for word in words]
+        raise t.error(key, "must be a command (a string or a list of non-empty strings)" + (' or "" for the package metadata' if empty else ""))
+    if words[0].lower().removesuffix(".exe") in _INTERPRETER_WORDS:
+        raise t.error(key, f"starts with '{words[0]}': write <PYTHON>, the interpreter polybind found, as the first word")
+    return [word.replace("<MODULE>", module) for word in words]
 
 
 def _parse_python(name: str, data: object, where: str, origin: str) -> PythonProvider:
     if not isinstance(data, dict):
         raise ConfigError(f"{origin}: {where}.python must be a table (leave it out to turn the provider off)")
+    for key, replacement in RENAMED_PYTHON_KEYS.items():
+        if key in data:
+            raise ConfigError(f"{origin}: {where}.python.{key} was replaced by {replacement}")
     t = _Table(data, f"{where}.python", origin, PYTHON_KEYS)
     package = t.string("package", name, empty=False)
     module = t.string("module", package.replace("-", "_"), empty=False)
-    if t.boolean("module-cli", True):
-        if t.has("cmake-function"):
-            raise t.error("cmake-function", "needs module-cli = false")
-        return PythonProvider(
-            package, module, True,
-            t.strings("cmake-flag", ["--cmake-dir"], single=True),
-            _version_command(t, module, True), "",
-        )
-    if t.has("cmake-flag"):
-        raise t.error("cmake-flag", "needs module-cli = true (without a CLI there is nothing to pass it to)")
+    commands = t.data.get("commands", {})
+    if not isinstance(commands, dict):
+        raise t.error("commands", "must be a table (cmake-dir, version)")
+    c = _Table(commands, f"{where}.python.commands", origin, COMMAND_KEYS)
     return PythonProvider(
-        package, module, False, [], _version_command(t, module, False),
-        t.string("cmake-function", "get_cmake_dir", empty=False),
+        package, module,
+        _command(c, "cmake-dir", module, ["<PYTHON>", "-m", module, "--cmake-dir"]),
+        _command(c, "version", module, ["<PYTHON>", "-m", module, "--version"], empty=True),
     )
 
 

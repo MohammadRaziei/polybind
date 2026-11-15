@@ -359,8 +359,8 @@ tag-format = "v%s"
 [deps.liburlparser]                 # a native library with a CMake package; every key is optional
 version-spec = ">=2.2.0,<3"
 targets      = ["liburlparser::urlparser"]
-python.cmake-flag = "--cmake-dir"   # a python.* table turns the pip/uv provider on
-# python.version-command = "python -m liburlparser --version"   # the default; a console script works too, e.g. "tool --version"
+python.commands.cmake-dir = "<PYTHON> -m <MODULE> --cmake-dir"   # a python.* table turns the pip/uv provider on; this is the default
+# python.commands.version = "<PYTHON> -m <MODULE> --version"   # the default; "" reads the package metadata; a console script works too, e.g. "tool --version"
 fetch.url    = "https://github.com/mohammadraziei/liburlparser.git"   # fetch.url turns the git provider on
 ```
 

@@ -253,11 +253,16 @@ def test_python_alias_is_uv_when_found_else_pip(project: Project) -> None:
     assert project.state("fakelib", "provider") == ("uv" if UV else "pip")
 
 
+# A module without a command line names its own command; `<PYTHON>` is the interpreter polybind found.
+NO_CLI_CMAKE_DIR = 'python.commands.cmake-dir = ["<PYTHON>", "-c", "print(__import__(\'fakelib\').get_cmake_dir())"]\n'
+
+
 def test_module_without_a_command_line(project: Project) -> None:
     make_wheel(project.wheels, "fakelib", "2.2.0", cli=False)
-    project.write('[deps.fakelib]\nversion-spec = ">=2"\npython.module-cli = false\n')
+    project.write('[deps.fakelib]\nversion-spec = ">=2"\n' + NO_CLI_CMAKE_DIR)
     out = project.configure()
-    assert "deps: fakelib 2.2.0 (" in out.stdout  # the version comes from the package metadata
+    # `<PYTHON> -m fakelib --version` fails (there is no command line), so the version comes from the package metadata
+    assert "deps: fakelib 2.2.0 (" in out.stdout
 
 
 def test_version_command_defaults_to_the_module_cli(project: Project) -> None:
@@ -286,25 +291,25 @@ def test_version_command_without_a_number_is_not_a_version(project: Project) -> 
 
 def test_empty_version_command_reads_the_metadata(project: Project) -> None:
     make_wheel(project.wheels, "fakelib", "2.0.0", reported="2.5.0")
-    project.write('[deps.fakelib]\nversion-spec = ">=2,<3"\npython.version-command = ""\n')
+    project.write('[deps.fakelib]\nversion-spec = ">=2,<3"\npython.commands.version = ""\n')
     assert "deps: fakelib 2.0.0 (" in project.configure().stdout
 
 
 def test_version_command_can_be_a_console_script(project: Project) -> None:
     make_wheel(project.wheels, "fakelib", "2.0.0", cli=False, reported="2.5.0", script="fakelib-tool")
-    project.write('[deps.fakelib]\nversion-spec = ">=2,<3"\npython.module-cli = false\npython.version-command = "fakelib-tool --version"\n')
+    project.write('[deps.fakelib]\nversion-spec = ">=2,<3"\n' + NO_CLI_CMAKE_DIR + 'python.commands.version = "fakelib-tool --version"\n')
     assert "deps: fakelib 2.5.0 (" in project.configure().stdout
 
 
 def test_version_command_can_be_a_list_with_the_module_in_it(project: Project) -> None:
     make_wheel(project.wheels, "fakelib", "2.0.0", reported="2.5.0")
-    project.write('[deps.fakelib]\nversion-spec = ">=2,<3"\npython.version-command = ["python", "-m", "{module}", "--version"]\n')
+    project.write('[deps.fakelib]\nversion-spec = ">=2,<3"\npython.commands.version = ["<PYTHON>", "-m", "<MODULE>", "--version"]\n')
     assert "deps: fakelib 2.5.0 (" in project.configure().stdout
 
 
 def test_a_version_command_that_fails_falls_back_to_the_metadata(project: Project) -> None:
     make_wheel(project.wheels, "fakelib", "2.2.0")
-    project.write('[deps.fakelib]\nversion-spec = ">=2"\npython.version-command = "no-such-tool --version"\n')
+    project.write('[deps.fakelib]\nversion-spec = ">=2"\npython.commands.version = "no-such-tool --version"\n')
     assert "deps: fakelib 2.2.0 (" in project.configure().stdout
 
 

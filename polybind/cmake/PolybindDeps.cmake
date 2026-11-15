@@ -17,8 +17,8 @@
 # the tag that passed the tests, the provider that delivered it and, for a git source, the commit.
 #
 # Providers [python, uv, pip, fetch, system]:
-#   uv, pip  a Python package that answers `python -m <module> <cmake-flag>` (or <module>.<cmake-function>() when the
-#            module has no command line), installed into the build tree by that tool, or already importable.
+#   uv, pip  a Python package that prints its CMake directory when `python.commands.cmake-dir` runs (default
+#            `<PYTHON> -m <module> --cmake-dir`), installed into the build tree by that tool, or already importable.
 #   python   uv when it is found, else pip.
 #   fetch    `git clone --depth 1` of one tag with FetchContent: no Python, no submodule, no history.
 #   system   find_package() on the normal CMake search path. Never part of `auto`.
@@ -233,14 +233,20 @@ function(_polybind_deps_python_run out py target_dir)
     set(${out} "${_out}" PARENT_SCOPE)
 endfunction()
 
-# Runs a `version-command`: a first word of `python` is the interpreter <py>; any other first word is a console script, which
-# is looked for in the scripts directory of <target_dir> first (bin, or Scripts on Windows) and then on PATH.
+# Runs a `python.commands.*` command: every <PYTHON> in it is the interpreter <py>. A command whose first word is not <PYTHON>
+# starts a console script, which is looked for in the scripts directory of <target_dir> first (bin, or Scripts on Windows) and
+# then on PATH. The words have no semicolon in them: it would split the argument (CMake list).
 function(_polybind_deps_command_run out py target_dir)
-    set(_words ${ARGN})
-    list(POP_FRONT _words _first)
-    if(_first STREQUAL "python")
-        _polybind_deps_python_run(_out "${py}" "${target_dir}" ${_words})
+    list(GET ARGN 0 _first)
+    set(_words)
+    foreach(_w IN LISTS ARGN)
+        string(REPLACE "<PYTHON>" "${py}" _w "${_w}")
+        list(APPEND _words "${_w}")
+    endforeach()
+    if(_first MATCHES "<PYTHON>")
+        _polybind_deps_run(_out "${target_dir}" ${_words})
     else()
+        list(POP_FRONT _words _first)
         set(_exe "${_first}")
         foreach(_dir "${target_dir}/bin" "${target_dir}/Scripts")
             foreach(_name "${_first}" "${_first}.exe")
@@ -254,7 +260,7 @@ function(_polybind_deps_command_run out py target_dir)
     set(${out} "${_out}" PARENT_SCOPE)
 endfunction()
 
-# The version in what a `version-command` printed: the first line, and in it the first word that is a plain number (a leading v
+# The version in what a `python.commands.version` command printed: the first line, and in it the first word that is a plain number (a leading v
 # is dropped), so "0.8.1", "httpp 0.8.1" (what argparse's `version=` prints) and "httpp 0.8.1 (build 7)" all give 0.8.1. When no
 # word is a plain number the last word stays as it is ("0.0.0+unknown" then satisfies only an empty spec, section 5.6). Empty
 # output stays empty.
@@ -280,16 +286,10 @@ function(_polybind_deps_version_from_output out raw)
 endfunction()
 
 # Asks the package for its CMake directory and version. Sets _py_cmake_dir and _py_version in the caller, empty when the
-# package is not importable. With module-cli the CMake dir comes from `python -m <module> <cmake_flag>`, without it from
-# <module>.<cmake_function>(). The version comes from <version_command> when it is not empty (and prints something) and from
-# the package metadata otherwise. The snippets have no semicolon: it would split the argument (CMake list).
-function(_polybind_deps_python_query py target_dir module package module_cli cmake_flag version_command cmake_function)
-    if(module_cli)
-        _polybind_deps_python_run(_cmake_dir "${py}" "${target_dir}" -m ${module} ${cmake_flag})
-    else()
-        _polybind_deps_python_run(_cmake_dir "${py}" "${target_dir}" -c
-            "import sys, importlib\nprint(getattr(importlib.import_module(sys.argv[1]), sys.argv[2])())" ${module} ${cmake_function})
-    endif()
+# package is not importable. The CMake dir is what <cmake_dir_command> prints. The version comes from <version_command> when
+# it is not empty (and prints something) and from the package metadata otherwise.
+function(_polybind_deps_python_query py target_dir package cmake_dir_command version_command)
+    _polybind_deps_command_run(_cmake_dir "${py}" "${target_dir}" ${cmake_dir_command})
     set(_version "")
     if(_cmake_dir AND NOT version_command STREQUAL "")
         _polybind_deps_command_run(_version "${py}" "${target_dir}" ${version_command})
@@ -332,11 +332,8 @@ function(_polybind_deps_provider_python name json)
         return()
     endif()
     _polybind_json_get(_package "${json}" dependencies ${name} python package)
-    _polybind_json_get(_module "${json}" dependencies ${name} python module)
-    _polybind_json_get(_module_cli "${json}" dependencies ${name} python module_cli)
-    _polybind_json_list(_cmake_flag "${json}" dependencies ${name} python cmake_flag)
+    _polybind_json_list(_cmake_dir_command "${json}" dependencies ${name} python cmake_dir_command)
     _polybind_json_list(_version_command "${json}" dependencies ${name} python version_command)
-    _polybind_json_get(_cmake_function "${json}" dependencies ${name} python cmake_function)
     _polybind_json_get(_spec "${json}" dependencies ${name} version_spec)
     _polybind_json_get(_locked "${json}" dependencies ${name} lock version)
 
@@ -359,7 +356,7 @@ function(_polybind_deps_provider_python name json)
     string(TOLOWER "${name}" _lname)
     set(_target_dir "${CMAKE_BINARY_DIR}/polybind-deps/python/${_lname}")
 
-    _polybind_deps_python_query("${_py}" "${_target_dir}" "${_module}" "${_package}" "${_module_cli}" "${_cmake_flag}" "${_version_command}" "${_cmake_function}")
+    _polybind_deps_python_query("${_py}" "${_target_dir}" "${_package}" "${_cmake_dir_command}" "${_version_command}")
     set(_found_cmake_dir "${_py_cmake_dir}")
     set(_found_version "${_py_version}")
 
@@ -382,7 +379,7 @@ function(_polybind_deps_provider_python name json)
             string(REPLACE " " "" _requirement "${_package}${_spec}")
         endif()
         _polybind_deps_python_install("${_installer}" "${_py}" "${_target_dir}" "${_requirement}")
-        _polybind_deps_python_query("${_py}" "${_target_dir}" "${_module}" "${_package}" "${_module_cli}" "${_cmake_flag}" "${_version_command}" "${_cmake_function}")
+        _polybind_deps_python_query("${_py}" "${_target_dir}" "${_package}" "${_cmake_dir_command}" "${_version_command}")
         set(_found_cmake_dir "${_py_cmake_dir}")
         set(_found_version "${_py_version}")
         set(_good FALSE)
