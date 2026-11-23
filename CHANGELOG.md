@@ -4,6 +4,15 @@ All notable changes to polybind. The format follows [Keep a Changelog](https://k
 version numbers follow [Semantic Versioning](https://semver.org/) (while the major version is 0, a minor release may change
 the settings files).
 
+## [Unreleased]
+
+### Added
+
+- **C++ dispatch helpers: `polybind/dispatch.hpp` and `polybind/nanobind.hpp`.** One Python name for a function that works on several kinds of data (a class, a `uint8` array, a `float32` array), registered from one generic lambda: `polybind::def_dispatch(m, cls, "equalize_inplace", my_kinds, [](auto& x, my::tone_mode m) -> auto& {...}, ...)`. One overload per kind, array arguments received without conversion (`polybind::strict<...>`: a float64 array is a `TypeError`, not a silent cast), the same object given back so calls chain, enums by name (`polybind::enum_names<E>`, a bad name is a `ValueError`), the GIL released around the lambda, and a lint at import (`POLYBIND_LINT`, a `RuntimeWarning`) that the name `*_inplace` and the lambda agree. nanobind only. Spec 15.
+- **`polybind::polybind`**, a CMake target in `polybind/cmake/polybind-config.cmake`: only the include path, from the installed package (`find_package(polybind CONFIG PATHS $(polybind cmake-dir))`) or from a vendored copy (`include()`); it finds and links no binding library. Option `POLYBIND_LINT`.
+- **`polybind vendor DIR [--check]`**: copies the headers and the CMake config to `DIR/polybind/` with a `VENDORED` stamp (version, sha256 of each file); `--check` exits 1 for a missing, edited or out-of-date copy.
+- pytest marker `native` for the tests that compile a C++ module.
+
 ## [0.5.0] - 2026-11-15
 
 ### Changed (breaking)

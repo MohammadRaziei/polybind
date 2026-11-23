@@ -52,7 +52,7 @@ def _cmake_dir(_args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    from polybind import config, deps, version, wrap
+    from polybind import config, deps, vendor, version, wrap
 
     parser = argparse.ArgumentParser(
         prog="polybind",
@@ -74,6 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Print the directory of PolybindDeps.cmake, for include() in CMakeLists.txt.",
     ).set_defaults(func=_cmake_dir)
     wrap.add_parser(subs)
+    vendor.add_parser(subs)
     return parser
 
 

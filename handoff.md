@@ -8,12 +8,12 @@ Repo: `github.com/mohammadraziei/polybind` (cloned in chat, **nothing was pushed
 
 - Reply in **Persian**; code, commands, file contents in English.
 - **Build and run everything through CMake**: `cmake -S . -B /tmp/pb-build && (cd /tmp/pb-build && ctest --output-on-failure)` runs ruff on the whole project and pytest. Do not call pytest/ruff directly in the workflow (calling them while iterating is fine, the final run is ctest).
-- **After every step: zip the whole project without `.git` and send it**, without being asked. No diff/patch files.
+- **After every step: send a patch file** (`git diff --binary`, checked to apply to a fresh clone), without being asked. (It was a zip of the whole project until 2026-11-21, when the owner changed it to a patch.)
 - Run ruff so there are no lint errors (ruff target is `py38`, `tests/data` is excluded on purpose: fixtures of the stub parser).
 - Numbers and results must be measured; say plainly what was not run. Every new test should be mutation-checked (break the code on purpose, see a test fail). Do not reopen decisions listed in `spec.md`.
 - Design first, code after: the owner discusses a design, then says "continue".
 
-## What exists (all tests pass: 257 through ctest, ruff clean)
+## What exists (all tests pass: 404 passed and 3 skipped through ctest, ruff clean)
 
 | piece | files | tests |
 |---|---|---|
@@ -42,6 +42,12 @@ Verified in this chat: a real wheel built with `pip wheel .` contains `polybind/
 - Dynamic version (spec 4.1): `polybind.version.project_source/project_version` feed the scikit-build-core provider (`version` field) and a hatch version source (`polybind/hatch_plugin.py`, entry point group `hatch`). Pyproject cannot be the source of a dynamic version. `polybind version` itself still works without settings (owner is fine with that). Measured with real isolated builds on Linux, both backends.
 - CI (GitHub Actions, Python 3.11, pip only, no uv) caught a test-fixture bug: wheels built by `make_wheel` must record `0o100755` for `.data/scripts/*`, else `pip --target` installs the script without the executable bit (uv does not care) and the console-script test silently fell back to the metadata. To see CI's situation locally, run ctest with `uv` off PATH.
 - Key bug found and fixed: a `;` inside a `python -c` argument is split by CMake (list). Snippets use `\n`.
+
+## C++ dispatch helpers (2026-11-21, spec section 15)
+
+- New: `polybind/include/polybind/dispatch.hpp` (backend-independent core) and `nanobind.hpp` (backend), the CMake target `polybind::polybind` (`polybind/cmake/polybind-config.cmake`), and `polybind vendor DIR [--check]`. Developed for libstb (`mohammadraziei/libstb`, its `binding.md`), which is the first user; the design discussion and the measurements are in that file.
+- The package is no longer pure Python: it ships header-only C++ and a CMake file as package data. The Python side is still stdlib only; the `native` tests need CMake, a compiler, nanobind and numpy and skip themselves without them (`-m 'not native'` skips them).
+- Done and mutation-checked (6 mutations: strict caster, lint, same-object check, `POLYBIND_LINT=0`, `vendor --check`, a `noexcept` caster). Not done: pybind11 backend, functions that make a new value (`const auto&` first parameter), settings in `polybind.toml`. The nanobind 3.x facts that the design stands on (a `noconvert()` returns a new type; `from_python` must not be `noexcept` for a bad name to be a `ValueError`) were checked on nanobind 3.1; the tests would show a change.
 
 ## What is NOT done
 

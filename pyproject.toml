@@ -71,6 +71,9 @@ ignore = ["E501"]
 testpaths = ["tests"]
 addopts   = "-v --tb=short"
 pythonpath = [ "." ]
+markers = [
+    "native: compiles a C++ module (needs CMake, a C++ compiler, nanobind and numpy); skip it with -m 'not native'",
+]
 
 # ---------------------------------------------------------------------------
 # Coverage

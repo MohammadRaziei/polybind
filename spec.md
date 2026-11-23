@@ -28,11 +28,13 @@ Tools, each independent of the others and each reading the same settings:
 | `deps` | native dependency declaration, resolution, lock | **[done]**: settings, lock, CMake resolver, record (M2, M3) |
 | build plugin | puts the declared dependencies into the build and runtime requirements | **[proposed]** + **[unverified]** |
 | `bundle` | ships a dependency's shared library inside our wheel | **[decided]** in principle |
+| `dispatch` | C++ headers: one Python name for a function that works on several kinds of data (section 15) | **[done]**, nanobind backend |
+| `vendor` | copies the dispatch headers and their CMake config into a project, with a stamp | **[done]** |
 
 Non-goals:
 
 - Pure-Python dependencies (librosa, numpy, pytest, ...). They belong in `pyproject.toml`. A dependency in polybind is a native library that has a CMake package. **[decided]**
-- Low-level build helpers (`find_package` modules for nanobind, pybind11 or Cython). **[decided]**
+- Low-level build helpers (`find_package` modules for nanobind, pybind11 or Cython). **[decided]** The target `polybind::polybind` of section 15 is not one: it adds an include path for polybind's own headers and finds or links no binding library.
 - Replacing auditwheel, delocate or delvewheel.
 
 ## 2. Principles
@@ -360,6 +362,7 @@ One parser (`polybind/cli.py`); every tool registers itself with `add_parser` in
 |---|---|
 | `polybind wrap INPUT.pyi [options]` | **[done]**: was `polybind gen INPUT.pyi`, before that `polybind INPUT.pyi` |
 | `polybind cmake-dir` | **[done]** |
+| `polybind vendor DIR [--check]` | **[done]**: section 15 |
 | `polybind --version` | exists |
 | `polybind version ...` | **[done]** |
 | `polybind config` | **[done]**: effective settings and their sources |
@@ -398,3 +401,32 @@ One parser (`polybind/cli.py`); every tool registers itself with `add_parser` in
 6. A locked provider that cannot deliver: warning or error, section 9.
 7. Does the plugin mechanism of section 7.2 work at all.
 8. `polybind build`: what it would add to `python -m build` (a gate: `deps validate`, `version check`?). Nothing is written until that is decided.
+
+## 15. C++ dispatch helpers and `polybind vendor` **[done]**, nanobind backend only
+
+A C++ library has a template or an overload for each kind of data it handles, and a binding library shows every one as a function of its own. `polybind wrap` unifies **classes** (`Box__int32`, `Box__float64` -> `Box`) in Python, after the fact, from a stub. This section is the other half, for **functions**, written in C++ and checked by the binding library's own overload resolution (no Python layer per call).
+
+**Headers** (`polybind/include/polybind/`, header-only, C++17):
+
+- `dispatch.hpp`: the backend-independent core. `polybind::kinds<K...>` (the kinds of data a function is made for, in the order their overloads are tried), `polybind::def_dispatch(scope, cls, name, kinds, lambda, first_descriptor, extra...)`, `polybind::enum_names<E>` (a project specialises it for each enum it takes by name), `polybind::named<E>`, `polybind::strict<T>`, and the signature probing. It includes no binding library.
+- `nanobind.hpp`: the nanobind backend (`polybind::nanobind_backend`, the type casters of `named<E>` and `strict<T>`). The project specialises `polybind::nanobind_backend::kind<K>` for each kind. pybind11 is a second file with the same shape; Cython has fused types of its own and is not served by these headers; pure CPython would be a small binding library of its own. All **[open]**, low priority.
+
+**The lambda.** One generic lambda for all kinds: `[](auto& x, my::tone_mode mode) -> auto& { return f(x, mode); }`.
+
+- Its signature is read for each kind by taking the address of `operator()<K>` (or `<K, K>` for a lambda with two generic parameters): that gives the types of the other parameters (a binding library needs them to build an overload) and whether the first one is `auto&` (changes its argument) or `const auto&`. Only `auto&` is supported yet: **a function that makes a new value of the kind is not**.
+- The first parameter changes its argument. The lambda returns `void` or `K&` (the argument): the Python call gives back the same object, so calls chain. Another return type is a compile error; a `K&` that is not the argument is a `std::logic_error` when it runs.
+- The other parameters have concrete types (converted from Python before the lambda runs, so the GIL can be released around it: always done). Exceptions: an enum with `enum_names` is a name (any case) or the enum; a `const auto&` second parameter (a lambda with two generic parameters) is a second value of the same kind.
+- An array parameter is `polybind::strict<nanobind::ndarray<...>>`: no implicit conversion (a float64 array is not turned into uint8, a non-contiguous one is not copied; a read-only one is refused when the function changes it). In nanobind 3 `arg::noconvert()` returns a new type, and a peer parameter has no descriptor to put it on, so strictness is a property of the parameter type.
+- A bad enum name throws `std::invalid_argument` from the caster, which is a `ValueError`. The caster's `from_python` is not `noexcept` on purpose: nanobind 3.1 propagates the exception from there (a `noexcept` one terminates the process). Checked by a test.
+
+**Lint** (`POLYBIND_LINT`, on by default). When a function is registered its name is checked against its lambda: a name that ends with `_inplace` must be a lambda that changes its argument and the other way round. A mismatch is a `RuntimeWarning` at import (`PyErr_WarnEx`, so the same for every backend, and an error under `-W error`). Not a compiler warning: a project may have a legitimate exception (an in-place function whose name has no suffix), and it must not be silenced with a pragma. `-DPOLYBIND_LINT=OFF` (a CMake option of the target) defines `POLYBIND_LINT=0` and turns this check off; the compile-time checks (the shape of the lambda, its return type) stay.
+
+**CMake.** `polybind/cmake/polybind-config.cmake` defines `polybind::polybind` (`INTERFACE IMPORTED GLOBAL`): the include path only, and `POLYBIND_LINT=0` when the option is off. It finds the headers next to itself (`../include`, the installed package) or beside it (a vendored copy), so one file serves both. From the installed package: `find_package(polybind CONFIG PATHS <polybind cmake-dir> NO_DEFAULT_PATH)`, which also works through the resolver of section 10 as a dependency of a project.
+
+**`polybind vendor DIR`.** For a build that must not need polybind: copies `dispatch.hpp`, `nanobind.hpp` and `polybind-config.cmake` to `DIR/polybind/` and writes `DIR/polybind/VENDORED` (the polybind version, then the sha256 of each file). `polybind vendor --check DIR` writes nothing; it exits 1 and says why when a file is missing, was edited after the copy (the stamp has another hash), or is whole but not the installed polybind's; exit 2 for a directory with no stamp or a damaged one. The project then does `include(DIR/polybind/polybind-config.cmake)`.
+
+**Tests.** `tests/test_vendor.py`; `tests/test_dispatch_headers.py`: the CMake target by configure only (installed, vendored, lint off), and (marked `native`: CMake, a compiler, nanobind and numpy) a toy module `tests/data/dispatch_module.cpp` compiled against the target in both ways and run by `tests/data/dispatch_checks.py`. Every test was mutation-checked.
+
+**Measured** (nanobind 3.1, one call, this machine): a function with three overloads costs 62 ns for the first kind, 224 ns for the second and 348 ns for the third, against 201 ns for one overload; a real image operation is 22 us (64 x 64) to 8 ms (1920 x 1080). This was measured on a toy module with plain nanobind overloads, not on the helper itself.
+
+**Open.** pybind11 and CPython backends; functions that make a new value of the same kind (a `const auto&` first parameter); `POLYBIND_LINT` and the dispatch options as settings of `polybind.toml`, passed by the CMake resolver (the plugin of section 7.2 cannot set `cmake.define`: scikit-build-core 1.1.2 has no hook for it); an exemption mark for one function with a legitimate odd name.

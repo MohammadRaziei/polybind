@@ -19,6 +19,8 @@
 | `polybind config` | print the effective settings and where each one came from |
 | `polybind cmake-dir` | print the directory of `PolybindDeps.cmake` for `include()` |
 | `polybind wrap` | one Python class for the C++ template variants in a `.pyi` stub (the rest of this page) |
+| `polybind vendor` | copy the C++ dispatch helpers (headers and CMake config) into a project that must build without polybind installed |
+| `polybind/dispatch.hpp` | C++ header-only helpers: one Python name for a function that works on several kinds of data ([below](#c-dispatch-helpers)) |
 
 Settings live in `polybind.toml` or `[tool.polybind]`; see `spec.md`.
 
@@ -81,6 +83,60 @@ Pair[("float64", "int32")]              # → _mylib.Pair__float64__int32
 
 Because polybind works from the `.pyi` stub, it is **binding-method agnostic**:
 the same command works for nanobind, pybind11, and Cython.
+
+---
+
+## C++ dispatch helpers
+
+`polybind wrap` is for classes. For a **function** that works on several kinds of data (an image class, a `uint8` array, a
+`float32` array), `polybind/dispatch.hpp` registers one overload per kind from **one generic lambda**:
+
+```cpp
+#include <polybind/nanobind.hpp>          // the nanobind backend; it includes polybind/dispatch.hpp
+
+polybind::def_dispatch(m, image_cls, "equalize_inplace", my_kinds,
+    [](auto& x, my::tone_mode mode) -> auto& { return my::equalize_inplace(x, mode); },
+    "img"_a, "mode"_a = "luma", "doc");
+```
+
+```python
+lib.equalize_inplace(x)           # x: an Image, a uint8 array or a float32 array; the same object comes back
+img.equalize_inplace().gamma_inplace(2.2)      # and the method of the class chains
+lib.equalize_inplace(x, mode="luma")           # an enum is given by name (any case) or as itself; a bad name is a ValueError
+```
+
+What it does for every call:
+
+- One overload per **kind** of the list `my_kinds = polybind::kinds<Image, Array8, Array32>`, in that order. The lambda is
+  instantiated once for each. Another type (float64, int32, a list...) matches none: a `TypeError`.
+- An array is received **without conversion** (`polybind::strict<...>`): a float64 array does not become a uint8 one, a
+  non-contiguous array is not copied, a read-only one is refused for a function that changes it.
+- The first parameter is `auto&` (the function changes its argument and gives it back). It returns `void` or a reference to that
+  argument; the Python call then returns the very same object, so calls chain. Returning another object is an error when it runs.
+- The other parameters have concrete C++ types: they are converted from Python **before** the lambda runs, and the GIL is
+  released around it. An enum `E` with a `polybind::enum_names<E>` specialisation is given by name or as itself; a second
+  `const auto&` parameter is a second value of the same kind.
+- At import, the name is checked against the lambda (`POLYBIND_LINT`, on by default): a name that ends with `_inplace` must
+  belong to a lambda that changes its argument, and the other way round. A mismatch is a `RuntimeWarning` (an error under
+  `-W error`, which is how the tests of a project run).
+
+The project says how each kind is seen from Python by specialising `polybind::nanobind_backend::kind<K>` (a few lines per
+kind; see `tests/data/dispatch_module.cpp` for a complete toy module). Nothing in the headers knows about the project; they
+use no binding library but the backend header you include (nanobind today).
+
+**CMake.** The target `polybind::polybind` only adds the include path: it finds and links no binding library.
+
+```cmake
+execute_process(COMMAND "${Python_EXECUTABLE}" -m polybind cmake-dir OUTPUT_VARIABLE _d OUTPUT_STRIP_TRAILING_WHITESPACE)
+find_package(polybind CONFIG REQUIRED PATHS "${_d}" NO_DEFAULT_PATH)      # from the installed package
+target_link_libraries(my_module PRIVATE polybind::polybind)
+```
+
+Without polybind at build time: `polybind vendor third_party` copies `dispatch.hpp`, `nanobind.hpp` and
+`polybind-config.cmake` to `third_party/polybind/` with a `VENDORED` stamp (version and sha256 of each file), and the project
+uses `include(third_party/polybind/polybind-config.cmake)`, which defines the same target. `polybind vendor --check
+third_party` exits 1 when a file is missing, was edited, or is not the installed polybind's. `-DPOLYBIND_LINT=OFF` turns
+the import-time check off for a project (for what links the target; it defines `POLYBIND_LINT=0`).
 
 ---
 
