@@ -20,14 +20,24 @@
 //   released around it, which is done for every call), with two exceptions:
 //     * an enum E for which enum_names<E> is specialised is given by its name or as the enum itself;
 //     * a second `const auto&` parameter is a second value of the same kind as the first.
+// - A function that makes a NEW value takes `const auto&` as its first parameter and returns the value:
+//
+//     polybind::def_dispatch(m, image_cls, "equalize", my_kinds,
+//         [](const auto& x, my::tone_mode mode) { return my::equalize(x, mode); },
+//         "img"_a, "mode"_a = "luma", "doc");
+//
+//   The argument is only read (an array may be read-only) and is never copied. The lambda returns a value (not a
+//   reference, not void) of a type R for which the backend has a kind<R>: usually K itself, but it may be another
+//   kind (a function from a float array to a uint8 array). The backend turns it into a new Python object with
+//   kind<R>::wrap(R&&), after the GIL is taken back. The second `const auto&` parameter and the enums work as above.
 // - The names are checked when they are registered (POLYBIND_LINT, on by default): a name that ends with _inplace
 //   must belong to a lambda that takes `auto&`, and the other way round.
 //
 // Nothing in this file knows about a binding library or about the project: the backend (polybind/nanobind.hpp) and
-// the kinds come from outside. The functions that make a new value of the same kind (a `const auto&` first
-// parameter) are not supported yet.
+// the kinds come from outside.
 
 #include <cstddef>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -187,17 +197,55 @@ auto make_overload(F f, const char* name, std::tuple<Rest...>*) {
     };
 }
 
+// The return policy of an overload that gives back a new value of the kind RK: a kind says it with `new_policy`.
+template <class RK>
+struct new_policy_tag {
+    static constexpr auto policy = RK::new_policy;
+};
+
+// ---- one overload of one function that makes a new value: the kind K is only read, and the result is a value of
+// the kind kind<R> (R is what the lambda returns)
+template <class B, class K, class F, class... Rest>
+auto make_new_overload(F f, std::tuple<Rest...>*) {
+    using S = sig_for<F, K>;
+    constexpr bool peers = S::generic == 2;
+    using kind = typename B::template kind<K>;
+    using R = typename S::ret;
+    static_assert(!std::is_void_v<R> && !std::is_reference_v<R>,
+                  "polybind: a function that does not change its argument returns a new value (not void, not a reference)");
+    using result_kind = typename B::template kind<R>;
+    return [f](typename kind::const_arg x, typename param<B, K, Rest, peers>::py_type... rest) ->
+           typename result_kind::new_ret {
+        typename kind::const_holder hx(x);
+        std::tuple<typename param<B, K, Rest, peers>::holder...> h{param<B, K, Rest, peers>::make(rest)...};
+        std::optional<R> out;
+        {
+            typename B::gil_release release;
+            out.emplace(std::apply([&](auto&... p) -> R { return f(hx.get(), p.get()...); }, h));
+        }
+        return result_kind::wrap(std::move(*out));
+    };
+}
+
 // The arguments the user gave after the name and the lambda: the descriptor of the first parameter (which is
 // the one the data comes in), then the others (descriptors, a doc string...).
 template <class B, class K, class Scope, class Cls, class F, class First, class... Extra>
 void def_kind(Scope& scope, Cls& cls, const char* name, F f, First&& first, Extra&&... extra) {
     using S = sig_for<F, K>;
-    static_assert(changes_its_argument_v<F, K>,
-                  "polybind: only functions that change their argument (auto& first parameter) are supported");
     using kind = typename B::template kind<K>;
-    auto overload = make_overload<B, K>(f, name, static_cast<typename S::rest*>(nullptr));
-    B::template def_function<kind>(scope, name, overload, first, extra...);
-    if constexpr (B::template is_class_of<Cls, K>) B::template def_method<kind>(cls, name, overload, extra...);
+    if constexpr (changes_its_argument_v<F, K>) {
+        auto overload = make_overload<B, K>(f, name, static_cast<typename S::rest*>(nullptr));
+        B::template def_function<kind>(scope, name, overload, first, extra...);
+        if constexpr (B::template is_class_of<Cls, K>) B::template def_method<kind>(cls, name, overload, extra...);
+    } else {
+        static_assert(std::is_const_v<std::remove_reference_t<typename S::first>> &&
+                          std::is_lvalue_reference_v<typename S::first>,
+                      "polybind: the first parameter of the lambda is `auto&` (changes it) or `const auto&` (makes a new value)");
+        using tag = new_policy_tag<typename B::template kind<typename S::ret>>;
+        auto overload = make_new_overload<B, K>(f, static_cast<typename S::rest*>(nullptr));
+        B::template def_function<tag>(scope, name, overload, first, extra...);
+        if constexpr (B::template is_class_of<Cls, K>) B::template def_method<tag>(cls, name, overload, extra...);
+    }
 }
 
 }  // namespace detail

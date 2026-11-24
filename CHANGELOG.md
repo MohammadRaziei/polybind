@@ -6,8 +6,11 @@ the settings files).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-24
+
 ### Added
 
+- **`def_dispatch` for functions that make a new value.** A lambda whose first parameter is `const auto&` and that returns a value: `[](const auto& x, my::tone_mode m) { return my::equalize(x, m); }`. The argument is only read (an array may be read-only) and never converted; the result is a new Python object made by `kind<R>::wrap(R&&)` (`R` is what the lambda returns: the same kind or another one, a `new_ret`, a `new_policy`), with the GIL released around the lambda. The lint also reports an `*_inplace` name on such a lambda. Spec 15.
 - **C++ dispatch helpers: `polybind/dispatch.hpp` and `polybind/nanobind.hpp`.** One Python name for a function that works on several kinds of data (a class, a `uint8` array, a `float32` array), registered from one generic lambda: `polybind::def_dispatch(m, cls, "equalize_inplace", my_kinds, [](auto& x, my::tone_mode m) -> auto& {...}, ...)`. One overload per kind, array arguments received without conversion (`polybind::strict<...>`: a float64 array is a `TypeError`, not a silent cast), the same object given back so calls chain, enums by name (`polybind::enum_names<E>`, a bad name is a `ValueError`), the GIL released around the lambda, and a lint at import (`POLYBIND_LINT`, a `RuntimeWarning`) that the name `*_inplace` and the lambda agree. nanobind only. Spec 15.
 - **`polybind::polybind`**, a CMake target in `polybind/cmake/polybind-config.cmake`: only the include path, from the installed package (`find_package(polybind CONFIG PATHS $(polybind cmake-dir))`) or from a vendored copy (`include()`); it finds and links no binding library. Option `POLYBIND_LINT`.
 - **`polybind vendor DIR [--check]`**: copies the headers and the CMake config to `DIR/polybind/` with a `VENDORED` stamp (version, sha256 of each file); `--check` exits 1 for a missing, edited or out-of-date copy.

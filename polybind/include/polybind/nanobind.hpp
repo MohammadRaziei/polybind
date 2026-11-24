@@ -13,6 +13,13 @@
 //     static auto mutable_holder(mutable_arg) -> an object with get() -> K&  (a view of the array, for example);
 //     struct const_holder: made from a const_arg, with get() -> const K&;
 //     static mutable_ret give_back(mutable_arg).
+// A kind that a function can give back as a NEW value (a lambda with a `const auto&` first parameter returns it by value)
+// has, besides the above (only const_arg and const_holder are needed to read it):
+//     using new_ret = the type of the Python object made: a nanobind::ndarray<nanobind::numpy, T> that owns its memory
+//                     (a capsule), or the class itself, returned by value;
+//     static constexpr auto new_policy = nanobind::rv_policy::automatic (or move): the policy of that return;
+//     static new_ret wrap(K&&): makes the Python object from the value (called with the GIL held).
+// A kind that is only ever a result needs just these three.
 // An array parameter is spelled polybind::strict<nanobind::ndarray<...>>: it is received without conversion (a float64
 // array does not become a uint8 one, nor a non-contiguous array a contiguous copy).
 // and, for an enum E, by specialising polybind::enum_names<E> (see dispatch.hpp). An enum is then given by its name

@@ -26,6 +26,13 @@ struct Pic {
     std::vector<int> v{1, 2, 3};
 };
 
+// A value that owns its memory: what a function that makes a new array gives back (a Grid is only a view).
+template <class T>
+struct Owned {
+    int h = 0, w = 0;
+    std::vector<T> v;
+};
+
 enum class mode { luma, each };
 mode mode_from_name(std::string_view n) {
     if (n == "luma") return mode::luma;
@@ -84,6 +91,21 @@ struct polybind::nanobind_backend::kind<Pic> {
     };
     static holder mutable_holder(Pic& p) { return holder{p}; }
     static Pic& give_back(Pic& p) { return p; }
+    using new_ret = Pic;
+    static constexpr auto new_policy = nb::rv_policy::automatic;
+    static Pic wrap(Pic&& p) { return std::move(p); }
+};
+// A kind that is the result of a function: an owning array (the capsule frees it), or the class by value.
+template <class T>
+struct polybind::nanobind_backend::kind<Owned<T>> {
+    using new_ret = nb::ndarray<nb::numpy, T>;
+    static constexpr auto new_policy = nb::rv_policy::automatic;
+    static new_ret wrap(Owned<T>&& o) {
+        auto* p = new Owned<T>(std::move(o));
+        nb::capsule owner(p, [](void* q) noexcept { delete static_cast<Owned<T>*>(q); });
+        const std::size_t shape[2] = {std::size_t(p->h), std::size_t(p->w)};
+        return new_ret(p->v.data(), 2, shape, owner);
+    }
 };
 inline constexpr polybind::kinds<Pic, Grid<std::uint8_t>, Grid<float>> my_kinds{};
 
@@ -112,6 +134,42 @@ void mix(Pic& p, const Pic& r) {
     for (std::size_t i = 0; i < p.v.size(); ++i) p.v[i] += r.v[i];
 }
 
+// functions that make a new value
+template <class T>
+Owned<T> scaled(const Grid<T>& g, int n, mode m) {
+    Owned<T> o{g.h, g.w, std::vector<T>(std::size_t(g.h) * std::size_t(g.w))};
+    for (std::size_t i = 0; i < o.v.size(); ++i) o.v[i] = T(g.data[i] * n + int(m));
+    return o;
+}
+Pic scaled(const Pic& p, int n, mode m) {
+    Pic o = p;
+    for (int& x : o.v) x = x * n + int(m);
+    return o;
+}
+// another kind than the argument's: a uint8 array from any array
+template <class T>
+Owned<std::uint8_t> bytes(const Grid<T>& g) {
+    Owned<std::uint8_t> o{g.h, g.w, std::vector<std::uint8_t>(std::size_t(g.h) * std::size_t(g.w))};
+    for (std::size_t i = 0; i < o.v.size(); ++i) o.v[i] = std::uint8_t(g.data[i]);
+    return o;
+}
+Pic bytes(const Pic& p) {
+    Pic o = p;
+    for (int& x : o.v) x += 100;
+    return o;
+}
+template <class T>
+Owned<T> blended(const Grid<T>& a, const Grid<T>& b) {
+    Owned<T> o{a.h, a.w, std::vector<T>(std::size_t(a.h) * std::size_t(a.w))};
+    for (std::size_t i = 0; i < o.v.size(); ++i) o.v[i] = T(a.data[i] + b.data[i]);
+    return o;
+}
+Pic blended(const Pic& a, const Pic& b) {
+    Pic o = a;
+    for (std::size_t i = 0; i < o.v.size(); ++i) o.v[i] += b.v[i];
+    return o;
+}
+
 NB_MODULE(dispatch_module, m) {
     auto pic = nb::class_<Pic>(m, "Pic").def(nb::init<>()).def_prop_ro("v", [](const Pic& p) { return p.v; });
     nb::enum_<mode>(m, "Mode").value("LUMA", mode::luma).value("EACH", mode::each);
@@ -133,4 +191,12 @@ NB_MODULE(dispatch_module, m) {
     // the lint: it changes its argument, and its name does not end with _inplace
     polybind::def_dispatch(m, pic, "add3", my_kinds, [](auto& x, int n, mode md) { add(x, n, md); }, "x"_a, "n"_a,
                            "mode"_a = "luma");
+    // a function that makes a new value: the same kind, another kind, a second value of the kind
+    polybind::def_dispatch(m, pic, "scaled", my_kinds, [](const auto& x, int n, mode md) { return scaled(x, n, md); },
+                           "x"_a, "n"_a, "mode"_a = "luma", "a new value");
+    polybind::def_dispatch(m, pic, "bytes", my_kinds, [](const auto& x) { return bytes(x); }, "x"_a);
+    polybind::def_dispatch(m, pic, "blended", my_kinds, [](const auto& x, const auto& r) { return blended(x, r); }, "x"_a,
+                           "other"_a);
+    // the lint the other way round: it does not change its argument, and its name ends with _inplace
+    polybind::def_dispatch(m, pic, "peek_inplace", my_kinds, [](const auto& x) { return bytes(x); }, "x"_a);
 }
