@@ -250,6 +250,10 @@ class TestBehaviour:
         assert new["enum"][0] == [1, 1, 1, 1, 1, 1]  # n = 0, mode "EACH" (= 1)
         assert new["enum"][1] == 'ValueError: unknown mode "bad": use luma or each'
 
+    def test_a_result_can_have_the_shape_of_the_argument(self, request, which) -> None:
+        # wrap(R&&, const holder&) is used when the kind has it: (2, 3, 1) in, (2, 3, 1) out; (2, 3) in, (2, 3) out
+        assert self.results(request, which)["new"]["shape_of_the_argument"] == [[2, 3, 1], [2, 3], [2, 3, 1], [2, 3, 1]]
+
     def test_the_input_of_such_a_function_may_be_read_only_but_is_never_converted(self, request, which) -> None:
         new = self.results(request, which)["new"]
         assert new["read_only_input"] == [0, 1, 2, 3, 4, 5]

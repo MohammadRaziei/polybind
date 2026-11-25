@@ -23,6 +23,7 @@ Usage::
     polybind version patch +2           patch += 2
     polybind version minor -5           minor -= 5 (never below 0)
     polybind version patch 4            patch = 4
+    polybind version set 1.2.3          set the whole version (a leading v is fine)
     polybind version tag                show the latest git tag
     polybind version tag set            set the version from the latest tag
     polybind version tag create [what]  commit and tag (major|minor|patch|X.Y.Z)
@@ -440,6 +441,12 @@ def cmd_part(args: argparse.Namespace, source: Source) -> int:
     return 0
 
 
+def cmd_set(args: argparse.Namespace, source: Source) -> int:
+    version = Version.parse(args.value.lstrip("v"))
+    _write_everywhere(args, source, version, "Version updated to", "Would update version to")
+    return 0
+
+
 def cmd_sync(args: argparse.Namespace, source: Source) -> int:
     version = source.read()
     if not args.sync:
@@ -579,6 +586,11 @@ def add_parser(subs: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
         _add_common(p, sub=True)
         p.add_argument("value", nargs="?", help="a number (set) or an offset: + - +N -N")
         p.set_defaults(handler=cmd_part, part=part)
+
+    set_ = subs.add_parser("set", help="set the whole version: X.Y.Z")
+    _add_common(set_, sub=True)
+    set_.add_argument("value", metavar="X.Y.Z", help="the new version (a leading v is fine)")
+    set_.set_defaults(handler=cmd_set)
 
     tag = subs.add_parser("tag", help="show the latest git tag; set / create")
     _add_common(tag, sub=True)

@@ -377,6 +377,7 @@ Exit codes: 0 success, 1 a check did not pass (`version check`), 2 a problem you
 ```bash
 polybind version                  # show X.Y.Z
 polybind version minor +          # minor += 1  (also: -, +N, -N, N)
+polybind version set 1.2.3        # the whole version
 polybind version tag create minor # bump, commit the version file, tag vX.Y.Z
 polybind version sync             # write the version into the [[version.sync]] files
 polybind version check            # exit 1 if a [[version.sync]] file or the latest git tag differs

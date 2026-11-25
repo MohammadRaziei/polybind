@@ -125,6 +125,43 @@ def test_header_write_keeps_format(header_project: Path) -> None:
     assert "#define HTTPP_VERSION_PATCH 9" in text
 
 
+def test_set_the_whole_version_in_a_header(header_project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert run(header_project, "set", "0.6.1") == 0
+    assert "Version updated to 0.6.1" in capsys.readouterr().out
+    text = (header_project / "include" / "httpp.h").read_text()
+    assert "#define HTTPP_VERSION_MAJOR 0  // keep this comment" in text
+    assert "#define HTTPP_VERSION_MINOR (6)" in text
+    assert "#define HTTPP_VERSION_PATCH 1" in text
+    assert run(header_project, "set", "v3.0.0") == 0  # a leading v is fine, and a part may go down
+    assert run(header_project) == 0 and capsys.readouterr().out.strip().endswith("3.0.0")
+
+
+def test_set_the_whole_version_in_pyproject(py_project: Path) -> None:
+    assert run(py_project, "set", "1.0.0") == 0
+    assert 'version = "1.0.0"  # static' in (py_project / "pyproject.toml").read_text()
+    assert 'version = "9.9.9"' in (py_project / "pyproject.toml").read_text()  # [tool.other] is not touched
+
+
+@pytest.mark.parametrize("bad", ["1.2", "1.2.3.4", "one", "1.-2.3", ""])
+def test_set_rejects_a_bad_version_and_writes_nothing(
+    header_project: Path, bad: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert run(header_project, "set", bad) == 2  # the exit code of every polybind error
+    assert f"invalid version '{bad}'" in capsys.readouterr().err
+    assert (header_project / "include" / "httpp.h").read_text() == HEADER
+
+
+def test_set_needs_a_version(header_project: Path) -> None:
+    with pytest.raises(SystemExit):
+        run(header_project, "set")
+
+
+def test_set_dry_run_writes_nothing(header_project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert run(header_project, "set", "5.5.5", "--dry-run") == 0
+    assert "Would update version to 5.5.5" in capsys.readouterr().out
+    assert (header_project / "include" / "httpp.h").read_text() == HEADER
+
+
 def test_dry_run_writes_nothing(header_project: Path) -> None:
     assert run(header_project, "major", "+", "--dry-run") == 0
     assert (header_project / "include" / "httpp.h").read_text() == HEADER

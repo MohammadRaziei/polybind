@@ -29,7 +29,8 @@
 //   The argument is only read (an array may be read-only) and is never copied. The lambda returns a value (not a
 //   reference, not void) of a type R for which the backend has a kind<R>: usually K itself, but it may be another
 //   kind (a function from a float array to a uint8 array). The backend turns it into a new Python object with
-//   kind<R>::wrap(R&&), after the GIL is taken back. The second `const auto&` parameter and the enums work as above.
+//   kind<R>::wrap(R&&) (or kind<R>::wrap(R&&, const holder&), which
+//   may read the holder of the argument), after the GIL is taken back. The second `const auto&` parameter and the enums work as above.
 // - The names are checked when they are registered (POLYBIND_LINT, on by default): a name that ends with _inplace
 //   must belong to a lambda that takes `auto&`, and the other way round.
 //
@@ -203,6 +204,17 @@ struct new_policy_tag {
     static constexpr auto policy = RK::new_policy;
 };
 
+// The result is given to Python by kind<R>::wrap(R&&, const holder&) when the kind has it (it may look at the holder of the
+// argument: for a result of the same shape as the argument), or else by kind<R>::wrap(R&&).
+template <class RK, class R, class H>
+auto wrap_result(R&& r, const H& like, int) -> decltype(RK::wrap(std::move(r), like)) {
+    return RK::wrap(std::move(r), like);
+}
+template <class RK, class R, class H>
+auto wrap_result(R&& r, const H&, long) -> decltype(RK::wrap(std::move(r))) {
+    return RK::wrap(std::move(r));
+}
+
 // ---- one overload of one function that makes a new value: the kind K is only read, and the result is a value of
 // the kind kind<R> (R is what the lambda returns)
 template <class B, class K, class F, class... Rest>
@@ -223,7 +235,7 @@ auto make_new_overload(F f, std::tuple<Rest...>*) {
             typename B::gil_release release;
             out.emplace(std::apply([&](auto&... p) -> R { return f(hx.get(), p.get()...); }, h));
         }
-        return result_kind::wrap(std::move(*out));
+        return wrap_result<result_kind>(std::move(*out), hx, 0);
     };
 }
 

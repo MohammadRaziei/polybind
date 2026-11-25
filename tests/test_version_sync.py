@@ -102,6 +102,14 @@ def test_bump_writes_source_and_every_file(project: Path) -> None:
     assert 'ctoon = "0.10.0"' in text(project, "README.md")
 
 
+def test_set_writes_source_and_every_file(project: Path) -> None:
+    assert run(project, "set", "0.6.1") == 0
+    assert "#define CTOON_VERSION_MINOR 6" in text(project, "include/ctoon.h")
+    assert 'version = "0.6.1"' in text(project, "Cargo.toml")
+    assert '.version = "0.6.1"' in text(project, "build.zig.zon")
+    assert "GIT_TAG v0.6.1" in text(project, "README.md")
+
+
 def test_dry_run_writes_nothing_and_lists_files(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert run(project, "minor", "+", "--dry-run") == 0
     out = capsys.readouterr().out

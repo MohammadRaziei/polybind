@@ -6,6 +6,13 @@ the settings files).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-25
+
+### Added
+
+- **`polybind version set X.Y.Z`** sets the whole version at once (a leading `v` is fine), in the source and in every `[[version.sync]]` file, like the part commands; `--dry-run` writes nothing.
+- **A result can read the argument it came from.** The `wrap` of a kind that makes a new value may be `wrap(R&&, const H& like)`, where `like` is the const_holder of the argument (the plain `wrap(R&&)` is the fallback). An array result can then have the shape of its argument, for example (H, W, 1) in and (H, W, 1) out.
+
 ## [0.6.0] - 2026-11-24
 
 ### Added

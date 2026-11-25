@@ -64,6 +64,12 @@ out["new"] = {
     "read_only_input": d.scaled(ro8, 1).ravel().tolist(),
     "pic": [pic2.v, pic2 is pic, pic.v, type(pic2).__name__],
     "chain": d.Pic().scaled(2).scaled(3).v,
+    "shape_of_the_argument": [
+        list(d.scaled(src8.reshape(2, 3, 1), 1).shape),
+        list(d.scaled(src8, 1).shape),
+        list(d.bytes(srcf.reshape(2, 3, 1)).shape),
+        list(d.blended(src8.reshape(2, 3, 1), src8.reshape(2, 3, 1)).shape),
+    ],
     "refused": {
         "float64": outcome(lambda: d.scaled(np.zeros((2, 3), np.float64), 1)),
         "int32": outcome(lambda: d.scaled(np.zeros((2, 3), np.int32), 1)),

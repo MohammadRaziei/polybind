@@ -1,6 +1,8 @@
 // A toy nanobind module that uses polybind/dispatch.hpp with three kinds: two array kinds (uint8 and float) and a class.
 // tests/test_dispatch_headers.py builds it (through CMake, against polybind::polybind) and runs tests/data/dispatch_checks.py.
+#include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -61,8 +63,9 @@ struct array_kind {
     };
     struct const_holder {
         Grid<T> g;
+        std::size_t ndim;  // the result may have the shape of the argument
         explicit const_holder(const array_ro& a)
-            : g{int(a.value.shape(0)), int(a.value.shape(1)), const_cast<T*>(a.value.data())} {}
+            : g{int(a.value.shape(0)), int(a.value.shape(1)), const_cast<T*>(a.value.data())}, ndim(a.value.ndim()) {}
         const Grid<T>& get() { return g; }
     };
     static holder mutable_holder(const array_rw& a) {
@@ -105,6 +108,14 @@ struct polybind::nanobind_backend::kind<Owned<T>> {
         nb::capsule owner(p, [](void* q) noexcept { delete static_cast<Owned<T>*>(q); });
         const std::size_t shape[2] = {std::size_t(p->h), std::size_t(p->w)};
         return new_ret(p->v.data(), 2, shape, owner);
+    }
+    // a result of the shape of the argument: (h, w, 1) for an argument of three dimensions
+    template <class H, class = decltype(std::declval<const H&>().ndim)>
+    static new_ret wrap(Owned<T>&& o, const H& like) {
+        auto* p = new Owned<T>(std::move(o));
+        nb::capsule owner(p, [](void* q) noexcept { delete static_cast<Owned<T>*>(q); });
+        const std::size_t shape[3] = {std::size_t(p->h), std::size_t(p->w), 1};
+        return new_ret(p->v.data(), like.ndim, shape, owner);
     }
 };
 inline constexpr polybind::kinds<Pic, Grid<std::uint8_t>, Grid<float>> my_kinds{};

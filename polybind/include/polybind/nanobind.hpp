@@ -18,7 +18,9 @@
 //     using new_ret = the type of the Python object made: a nanobind::ndarray<nanobind::numpy, T> that owns its memory
 //                     (a capsule), or the class itself, returned by value;
 //     static constexpr auto new_policy = nanobind::rv_policy::automatic (or move): the policy of that return;
-//     static new_ret wrap(K&&): makes the Python object from the value (called with the GIL held).
+//     static new_ret wrap(K&&): makes the Python object from the value (called with the GIL held). It may instead (or
+//                     as well: this one is tried first) be `wrap(K&&, const H& like)`, where `like` is the const_holder of the
+//                     argument: a result that has the shape of the argument (a one-channel array of shape (H, W, 1)) can ask it.
 // A kind that is only ever a result needs just these three.
 // An array parameter is spelled polybind::strict<nanobind::ndarray<...>>: it is received without conversion (a float64
 // array does not become a uint8 one, nor a non-contiguous array a contiguous copy).
