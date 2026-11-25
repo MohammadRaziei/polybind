@@ -269,6 +269,12 @@ class TestBehaviour:
         assert new["blended"] == [[0.0, 2.0, 4.0, 6.0, 8.0, 10.0], "uint8", [2, 4, 6]]
         assert all(o.startswith("TypeError") for o in new["blended_refused"]), new["blended_refused"]
 
+    def test_a_number_is_a_result_too(self, request, which) -> None:
+        assert self.results(request, which)["new"]["numbers"] == [15, "int", 15.0, "float", 6, "int"]
+
+    def test_a_result_with_more_channels_than_the_argument_is_always_three_dimensional(self, request, which) -> None:
+        assert self.results(request, which)["new"]["more_channels"] == [[2, 3, 3], [2, 3, 3], [5, 5, 5]]
+
     def test_the_memory_of_a_result_belongs_to_the_array(self, request, which) -> None:
         assert self.results(request, which)["new"]["owned_memory"] is True
 

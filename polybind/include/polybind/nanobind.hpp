@@ -34,12 +34,23 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
 
+// Ready-made kinds, so that a project writes no more than it must:
+//     - a number (int, double, bool, ...) is a kind for the RESULT of a function (an Otsu level, a count): nothing to write;
+//     - polybind::array_kind<Traits, T>: a matrix type of the project as a numpy array of T (see below).
+
+#include <cstddef>
+#include <stdexcept>
+#include <type_traits>
+#include <utility>
+
+#include <nanobind/ndarray.h>
+
 #include "dispatch.hpp"
 
 namespace polybind {
 
 struct nanobind_backend {
-    template <class K>
+    template <class K, class = void>
     struct kind;  // specialised by the project
 
     using gil_release = nanobind::gil_scoped_release;
@@ -69,6 +80,67 @@ struct nanobind_backend {
 template <>
 struct backend_of<nanobind::module_> {
     using type = nanobind_backend;
+};
+
+// A number is a kind that a function can only give back: an int or a double or a bool is the Python number.
+template <class K>
+struct nanobind_backend::kind<K, std::enable_if_t<std::is_arithmetic_v<K>>> {
+    using new_ret = K;
+    static constexpr auto new_policy = nanobind::rv_policy::automatic;
+    static K wrap(K&& value) { return value; }
+};
+
+// A matrix type of the project as a numpy array of T, in one line:
+//     template <> struct polybind::nanobind_backend::kind<my::mat8u> : polybind::array_kind<my_traits, std::uint8_t> {};
+// `Traits` says what the project's matrix is, with, for the element type T:
+//     template <class T> using matrix = the matrix of T (a view of memory, or an owner: a view must not own the memory);
+//     template <class T, class A> static matrix<T> view(const A& array)
+//             a matrix that is a VIEW of the memory of a nanobind::ndarray (const or not) of shape (H, W) or (H, W, C); it checks
+//             the shape and throws what it likes (std::invalid_argument is a ValueError);
+//     template <class T> static T* data(matrix<T>&); static std::size_t height / width / channels(const matrix<T>&);
+//     static bool empty(const matrix<T>&).
+// The kind then has: the argument that is only read or that is changed (strict: a C-contiguous numpy array of exactly the
+// type T, a read-only one for reading), and, for a function that gives back a NEW matrix, an owning array: the matrix moves to
+// the heap and a capsule frees it with the array. The array has the shape of the argument: (H, W) for (H, W) and (H, W, 1)
+// for (H, W, 1) when the matrix has one channel, and (H, W, C) when it has more (wrap(R&&, const holder&); without the
+// holder, wrap(R&&): (H, W) for one channel).
+template <class Traits, class T>
+struct array_kind {
+    using matrix = typename Traits::template matrix<T>;
+    using array_rw = strict<nanobind::ndarray<T, nanobind::c_contig, nanobind::device::cpu>>;
+    using array_ro = strict<nanobind::ndarray<const T, nanobind::c_contig, nanobind::device::cpu>>;
+    using const_arg = array_ro;
+    using mutable_arg = array_rw;
+    using mutable_ret = array_rw;
+    static constexpr auto policy = nanobind::rv_policy::automatic;
+
+    struct holder {
+        matrix m;
+        matrix& get() { return m; }
+    };
+    struct const_holder {
+        matrix m;
+        bool three_d;  // the argument is (H, W, C): a result of one channel is (H, W, 1) too
+        explicit const_holder(const array_ro& a) : m(Traits::template view<T>(a.value)), three_d(a.value.ndim() == 3) {}
+        const matrix& get() { return m; }
+    };
+    static holder mutable_holder(const array_rw& a) { return holder{Traits::template view<T>(a.value)}; }
+    static array_rw give_back(const array_rw& a) { return a; }
+
+    using new_ret = nanobind::ndarray<nanobind::numpy, T>;
+    static constexpr auto new_policy = nanobind::rv_policy::automatic;
+    static new_ret make(matrix&& m, bool three_d) {
+        if (Traits::empty(m)) throw std::runtime_error("the result is empty");
+        auto* owned = new matrix(std::move(m));
+        nanobind::capsule owner(owned, [](void* p) noexcept { delete static_cast<matrix*>(p); });
+        const std::size_t shape[3] = {Traits::height(*owned), Traits::width(*owned), Traits::channels(*owned)};
+        return new_ret(Traits::data(*owned), three_d || shape[2] != 1 ? 3 : 2, shape, owner);
+    }
+    template <class H, class = decltype(std::declval<const H&>().three_d)>
+    static new_ret wrap(matrix&& m, const H& like) {
+        return make(std::move(m), like.three_d);
+    }
+    static new_ret wrap(matrix&& m) { return make(std::move(m), false); }
 };
 
 }  // namespace polybind

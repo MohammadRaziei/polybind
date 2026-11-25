@@ -18,21 +18,46 @@
 namespace nb = nanobind;
 using namespace nb::literals;
 
-// ---- the project's data: a view of an array, and a class
+// ---- the project's data: a matrix that is a view of memory (a function reads or changes an array) or an owner (a function makes
+// a new array), and a class
 template <class T>
-struct Grid {
-    int h = 0, w = 0;
+struct Mat {
+    int h = 0, w = 0, c = 1;
     T* data = nullptr;
+    std::vector<T> store;  // empty for a view
+    Mat() = default;
+    Mat(int h_, int w_, int c_, T* view) : h(h_), w(w_), c(c_), data(view) {}
+    Mat(int h_, int w_, int c_) : h(h_), w(w_), c(c_), store(std::size_t(h_) * std::size_t(w_) * std::size_t(c_)) {
+        data = store.data();
+    }
+    Mat(Mat&&) noexcept = default;  // the buffer of `store` stays where it is
+    Mat& operator=(Mat&&) noexcept = default;
+    Mat(const Mat&) = delete;
+    Mat& operator=(const Mat&) = delete;
 };
 struct Pic {
     std::vector<int> v{1, 2, 3};
 };
 
-// A value that owns its memory: what a function that makes a new array gives back (a Grid is only a view).
-template <class T>
-struct Owned {
-    int h = 0, w = 0;
-    std::vector<T> v;
+// What polybind::array_kind needs to know about the matrix
+struct MatTraits {
+    template <class T>
+    using matrix = Mat<T>;
+    template <class T, class A>
+    static Mat<T> view(const A& a) {
+        if (a.ndim() != 2 && a.ndim() != 3) throw std::invalid_argument("an array of shape (H, W) or (H, W, C) is expected");
+        return Mat<T>(int(a.shape(0)), int(a.shape(1)), a.ndim() == 3 ? int(a.shape(2)) : 1, const_cast<T*>(a.data()));
+    }
+    template <class T>
+    static T* data(Mat<T>& m) { return m.data; }
+    template <class T>
+    static std::size_t height(const Mat<T>& m) { return std::size_t(m.h); }
+    template <class T>
+    static std::size_t width(const Mat<T>& m) { return std::size_t(m.w); }
+    template <class T>
+    static std::size_t channels(const Mat<T>& m) { return std::size_t(m.c); }
+    template <class T>
+    static bool empty(const Mat<T>& m) { return m.h == 0 || m.w == 0 || m.c == 0; }
 };
 
 enum class mode { luma, each };
@@ -48,35 +73,11 @@ struct polybind::enum_names<mode> {
     static mode from_name(std::string_view n) { return mode_from_name(n); }
 };
 
-// ---- how Python sees each kind
-template <class T>
-struct array_kind {
-    using array_rw = polybind::strict<nb::ndarray<T, nb::c_contig, nb::device::cpu>>;
-    using array_ro = polybind::strict<nb::ndarray<const T, nb::c_contig, nb::device::cpu>>;
-    using const_arg = array_ro;
-    using mutable_arg = array_rw;
-    using mutable_ret = array_rw;
-    static constexpr auto policy = nb::rv_policy::automatic;
-    struct holder {
-        Grid<T> g;
-        Grid<T>& get() { return g; }
-    };
-    struct const_holder {
-        Grid<T> g;
-        std::size_t ndim;  // the result may have the shape of the argument
-        explicit const_holder(const array_ro& a)
-            : g{int(a.value.shape(0)), int(a.value.shape(1)), const_cast<T*>(a.value.data())}, ndim(a.value.ndim()) {}
-        const Grid<T>& get() { return g; }
-    };
-    static holder mutable_holder(const array_rw& a) {
-        return holder{Grid<T>{int(a.value.shape(0)), int(a.value.shape(1)), a.value.data()}};
-    }
-    static array_rw give_back(const array_rw& a) { return a; }
-};
+// ---- how Python sees each kind: two matrices in one line each (polybind::array_kind), and a class
 template <>
-struct polybind::nanobind_backend::kind<Grid<std::uint8_t>> : array_kind<std::uint8_t> {};
+struct polybind::nanobind_backend::kind<Mat<std::uint8_t>> : polybind::array_kind<MatTraits, std::uint8_t> {};
 template <>
-struct polybind::nanobind_backend::kind<Grid<float>> : array_kind<float> {};
+struct polybind::nanobind_backend::kind<Mat<float>> : polybind::array_kind<MatTraits, float> {};
 template <>
 struct polybind::nanobind_backend::kind<Pic> {
     using const_arg = const Pic&;
@@ -98,48 +99,28 @@ struct polybind::nanobind_backend::kind<Pic> {
     static constexpr auto new_policy = nb::rv_policy::automatic;
     static Pic wrap(Pic&& p) { return std::move(p); }
 };
-// A kind that is the result of a function: an owning array (the capsule frees it), or the class by value.
-template <class T>
-struct polybind::nanobind_backend::kind<Owned<T>> {
-    using new_ret = nb::ndarray<nb::numpy, T>;
-    static constexpr auto new_policy = nb::rv_policy::automatic;
-    static new_ret wrap(Owned<T>&& o) {
-        auto* p = new Owned<T>(std::move(o));
-        nb::capsule owner(p, [](void* q) noexcept { delete static_cast<Owned<T>*>(q); });
-        const std::size_t shape[2] = {std::size_t(p->h), std::size_t(p->w)};
-        return new_ret(p->v.data(), 2, shape, owner);
-    }
-    // a result of the shape of the argument: (h, w, 1) for an argument of three dimensions
-    template <class H, class = decltype(std::declval<const H&>().ndim)>
-    static new_ret wrap(Owned<T>&& o, const H& like) {
-        auto* p = new Owned<T>(std::move(o));
-        nb::capsule owner(p, [](void* q) noexcept { delete static_cast<Owned<T>*>(q); });
-        const std::size_t shape[3] = {std::size_t(p->h), std::size_t(p->w), 1};
-        return new_ret(p->v.data(), like.ndim, shape, owner);
-    }
-};
-inline constexpr polybind::kinds<Pic, Grid<std::uint8_t>, Grid<float>> my_kinds{};
+inline constexpr polybind::kinds<Pic, Mat<std::uint8_t>, Mat<float>> my_kinds{};
 
 // ---- the functions of the "library": one per kind
 void add(Pic& p, int n, mode m) {
     for (int& x : p.v) x += n + int(m);
 }
 template <class T>
-void add(Grid<T>& g, int n, mode m) {
-    for (int i = 0; i < g.h * g.w; ++i) g.data[i] = T(g.data[i] + n + int(m));
+void add(Mat<T>& g, int n, mode m) {
+    for (int i = 0; i < g.h * g.w * g.c; ++i) g.data[i] = T(g.data[i] + n + int(m));
 }
 Pic& add_ret(Pic& p, int n, mode m) {
     add(p, n, m);
     return p;
 }
 template <class T>
-Grid<T>& add_ret(Grid<T>& g, int n, mode m) {
+Mat<T>& add_ret(Mat<T>& g, int n, mode m) {
     add(g, n, m);
     return g;
 }
 template <class T>
-void mix(Grid<T>& g, const Grid<T>& r) {
-    for (int i = 0; i < g.h * g.w; ++i) g.data[i] = T(g.data[i] + r.data[i]);
+void mix(Mat<T>& g, const Mat<T>& r) {
+    for (int i = 0; i < g.h * g.w * g.c; ++i) g.data[i] = T(g.data[i] + r.data[i]);
 }
 void mix(Pic& p, const Pic& r) {
     for (std::size_t i = 0; i < p.v.size(); ++i) p.v[i] += r.v[i];
@@ -147,9 +128,9 @@ void mix(Pic& p, const Pic& r) {
 
 // functions that make a new value
 template <class T>
-Owned<T> scaled(const Grid<T>& g, int n, mode m) {
-    Owned<T> o{g.h, g.w, std::vector<T>(std::size_t(g.h) * std::size_t(g.w))};
-    for (std::size_t i = 0; i < o.v.size(); ++i) o.v[i] = T(g.data[i] * n + int(m));
+Mat<T> scaled(const Mat<T>& g, int n, mode m) {
+    Mat<T> o(g.h, g.w, g.c);
+    for (int i = 0; i < g.h * g.w * g.c; ++i) o.data[i] = T(g.data[i] * n + int(m));
     return o;
 }
 Pic scaled(const Pic& p, int n, mode m) {
@@ -159,9 +140,9 @@ Pic scaled(const Pic& p, int n, mode m) {
 }
 // another kind than the argument's: a uint8 array from any array
 template <class T>
-Owned<std::uint8_t> bytes(const Grid<T>& g) {
-    Owned<std::uint8_t> o{g.h, g.w, std::vector<std::uint8_t>(std::size_t(g.h) * std::size_t(g.w))};
-    for (std::size_t i = 0; i < o.v.size(); ++i) o.v[i] = std::uint8_t(g.data[i]);
+Mat<std::uint8_t> bytes(const Mat<T>& g) {
+    Mat<std::uint8_t> o(g.h, g.w, g.c);
+    for (int i = 0; i < g.h * g.w * g.c; ++i) o.data[i] = std::uint8_t(g.data[i]);
     return o;
 }
 Pic bytes(const Pic& p) {
@@ -170,14 +151,34 @@ Pic bytes(const Pic& p) {
     return o;
 }
 template <class T>
-Owned<T> blended(const Grid<T>& a, const Grid<T>& b) {
-    Owned<T> o{a.h, a.w, std::vector<T>(std::size_t(a.h) * std::size_t(a.w))};
-    for (std::size_t i = 0; i < o.v.size(); ++i) o.v[i] = T(a.data[i] + b.data[i]);
+Mat<T> blended(const Mat<T>& a, const Mat<T>& b) {
+    Mat<T> o(a.h, a.w, a.c);
+    for (int i = 0; i < a.h * a.w * a.c; ++i) o.data[i] = T(a.data[i] + b.data[i]);
     return o;
 }
 Pic blended(const Pic& a, const Pic& b) {
     Pic o = a;
     for (std::size_t i = 0; i < o.v.size(); ++i) o.v[i] += b.v[i];
+    return o;
+}
+// a number, not an array: an int for the bytes and a double for the floats; a three-channel array of the same size
+template <class T>
+auto total(const Mat<T>& g) {
+    long long sum = 0;
+    for (int i = 0; i < g.h * g.w * g.c; ++i) sum += (long long)g.data[i];
+    if constexpr (std::is_floating_point_v<T>) return double(sum);
+    else return int(sum);
+}
+int total(const Pic& p) {
+    int sum = 0;
+    for (int x : p.v) sum += x;
+    return sum;
+}
+template <class T>
+Mat<T> tripled(const Mat<T>& g) {  // a result of more channels than the argument: always (H, W, 3)
+    Mat<T> o(g.h, g.w, 3);
+    for (int i = 0; i < g.h * g.w; ++i)
+        for (int k = 0; k < 3; ++k) o.data[3 * i + k] = g.data[i * g.c];
     return o;
 }
 
@@ -209,5 +210,10 @@ NB_MODULE(dispatch_module, m) {
     polybind::def_dispatch(m, pic, "blended", my_kinds, [](const auto& x, const auto& r) { return blended(x, r); }, "x"_a,
                            "other"_a);
     // the lint the other way round: it does not change its argument, and its name ends with _inplace
+    // a number as the result: an int for a uint8 array and a Pic, a double for a float array
+    polybind::def_dispatch(m, pic, "total", my_kinds, [](const auto& x) { return total(x); }, "x"_a);
+    // a result of three channels, whatever the argument has
+    polybind::def_dispatch(m, pic, "tripled", polybind::kinds<Mat<std::uint8_t>, Mat<float>>{}, [](const auto& x) { return tripled(x); },
+                           "x"_a);
     polybind::def_dispatch(m, pic, "peek_inplace", my_kinds, [](const auto& x) { return bytes(x); }, "x"_a);
 }

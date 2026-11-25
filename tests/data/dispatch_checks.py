@@ -84,6 +84,11 @@ out["new"] = {
         outcome(lambda: d.blended(d.Pic(), srcf)),
     ],
 }
+# a number as the result: an int for bytes and a Pic, a double for floats
+out["new"]["numbers"] = [d.total(src8), type(d.total(src8)).__name__, d.total(srcf), type(d.total(srcf)).__name__, d.total(d.Pic()),
+                         type(d.total(d.Pic())).__name__]
+# more channels than the argument: always (H, W, 3); the same for (H, W, 1)
+out["new"]["more_channels"] = [list(d.tripled(src8).shape), list(d.tripled(src8.reshape(2, 3, 1)).shape), d.tripled(src8)[1, 2].tolist()]
 # the memory of a result is owned by the array: it is still right after the garbage collector ran
 import gc  # noqa: E402
 

@@ -6,6 +6,12 @@ the settings files).
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-25
+
+### Added
+
+- **Ready-made kinds for the nanobind backend.** `polybind::array_kind<Traits, T>` makes a matrix type of the project a numpy array of `T` in one line (the argument that is read or changed, strict and C-contiguous, and a new array that owns its memory with the shape of the argument); `Traits` says what the matrix is (`matrix<T>`, `view<T>(array)`, `data`, `height`, `width`, `channels`, `empty`). A number (`int`, `double`, `bool`, ...) is a kind for the result of a function. `kind` got a second, defaulted template parameter (existing specialisations are not affected). Spec 15.
+
 ## [0.6.1] - 2026-11-25
 
 ### Added
