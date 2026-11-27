@@ -6,6 +6,12 @@ the settings files).
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-11-27
+
+### Fixed
+
+- **`polybind/dispatch.hpp` compiles with MSVC.** `make_overload` and `make_new_overload` used a local `constexpr bool peers` in the parameter list of the lambda they return; MSVC reports it as `error C3493: 'peers' cannot be implicitly captured because no default capture mode has been specified`. It is now the variable template `detail::has_peers_v<S>`, which needs no capture. Nothing changes for GCC and Clang.
+
 ## [0.6.2] - 2026-11-25
 
 ### Added

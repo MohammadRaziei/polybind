@@ -168,19 +168,24 @@ struct param<B, K, R, true, std::enable_if_t<std::is_same_v<std::decay_t<R>, K> 
     static holder make(py_type v) { return holder(v); }
 };
 
+// Whether the function has two generic parameters of the kind. A namespace-scope variable template, not a local
+// `constexpr bool` of the function that makes the overload: MSVC does not treat a local constexpr used in the parameter
+// list of a lambda as usable without a capture, and fails with C3493 (cannot be implicitly captured).
+template <class S>
+inline constexpr bool has_peers_v = S::generic == 2;
+
 // ---- one overload of one function: the kind K
 template <class B, class K, class F, class... Rest>
 auto make_overload(F f, const char* name, std::tuple<Rest...>*) {
     using S = sig_for<F, K>;
-    constexpr bool peers = S::generic == 2;
     using kind = typename B::template kind<K>;
     using R = typename S::ret;
     static_assert(std::is_void_v<R> || std::is_same_v<R, K&>,
                   "polybind: a function that changes its argument returns void or a reference to it (K&)");
-    return [f, name](typename kind::mutable_arg x, typename param<B, K, Rest, peers>::py_type... rest) ->
+    return [f, name](typename kind::mutable_arg x, typename param<B, K, Rest, has_peers_v<S>>::py_type... rest) ->
            typename kind::mutable_ret {
         auto hx = kind::mutable_holder(x);
-        std::tuple<typename param<B, K, Rest, peers>::holder...> h{param<B, K, Rest, peers>::make(rest)...};
+        std::tuple<typename param<B, K, Rest, has_peers_v<S>>::holder...> h{param<B, K, Rest, has_peers_v<S>>::make(rest)...};
         bool same = true;
         {
             typename B::gil_release release;
@@ -220,16 +225,15 @@ auto wrap_result(R&& r, const H&, long) -> decltype(RK::wrap(std::move(r))) {
 template <class B, class K, class F, class... Rest>
 auto make_new_overload(F f, std::tuple<Rest...>*) {
     using S = sig_for<F, K>;
-    constexpr bool peers = S::generic == 2;
     using kind = typename B::template kind<K>;
     using R = typename S::ret;
     static_assert(!std::is_void_v<R> && !std::is_reference_v<R>,
                   "polybind: a function that does not change its argument returns a new value (not void, not a reference)");
     using result_kind = typename B::template kind<R>;
-    return [f](typename kind::const_arg x, typename param<B, K, Rest, peers>::py_type... rest) ->
+    return [f](typename kind::const_arg x, typename param<B, K, Rest, has_peers_v<S>>::py_type... rest) ->
            typename result_kind::new_ret {
         typename kind::const_holder hx(x);
-        std::tuple<typename param<B, K, Rest, peers>::holder...> h{param<B, K, Rest, peers>::make(rest)...};
+        std::tuple<typename param<B, K, Rest, has_peers_v<S>>::holder...> h{param<B, K, Rest, has_peers_v<S>>::make(rest)...};
         std::optional<R> out;
         {
             typename B::gil_release release;
