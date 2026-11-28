@@ -6,6 +6,10 @@ the settings files).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `fetch` provider hides our own `CMAKE_MODULE_PATH` entries from the project it fetches.** A fetched project that has a module with the same name as one of ours (`Startup`, `Optimize`, `DynamicVersion`, ...) and appends its own `cmake/` after ours found OUR file on `include()`, and was then built with our flags. The entries inside the source or build tree of the project that resolves the dependency are hidden while the fetched project configures; entries outside them (a package manager's or a toolchain's modules) stay. The value is changed inside the provider function only, so the caller's `CMAKE_MODULE_PATH` is untouched.
+
 ## [0.6.3] - 2026-11-27
 
 ### Fixed

@@ -540,6 +540,24 @@ function(_polybind_deps_provider_fetch name json)
         GIT_SUBMODULES ""
         GIT_PROGRESS FALSE)
     message(STATUS "deps: fetching ${name} ${_tag} (git)")
+    # A fetched project often has modules of the same name as ours (Startup, Optimize, ...) and adds its own cmake/ AFTER
+    # ours, so `include(Optimize)` in it would silently find OUR file. The entries of CMAKE_MODULE_PATH inside this project's
+    # source or build tree are hidden while it configures; the others (a package manager's, a toolchain's) stay. This is a
+    # function: the value is local to it and the caller's CMAKE_MODULE_PATH is untouched.
+    set(_polybind_module_path "")
+    foreach(_dir IN LISTS CMAKE_MODULE_PATH)
+        set(_ours FALSE)
+        foreach(_root IN ITEMS "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
+            cmake_path(IS_PREFIX _root "${_dir}" NORMALIZE _inside)
+            if(_inside)
+                set(_ours TRUE)
+            endif()
+        endforeach()
+        if(NOT _ours)
+            list(APPEND _polybind_module_path "${_dir}")
+        endif()
+    endforeach()
+    set(CMAKE_MODULE_PATH "${_polybind_module_path}")
     FetchContent_MakeAvailable(${name})
     string(TOLOWER "${name}" _lname)
     FetchContent_GetProperties(${name})

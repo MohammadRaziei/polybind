@@ -428,6 +428,41 @@ def test_fetch_build_options_and_tag_format(project: Project) -> None:
     assert project.state("fetchlib", "tag") == "rel-2.0.0"
 
 
+def test_fetch_hides_our_module_path_from_the_fetched_project(project: Project) -> None:
+    repo = make_repo(project.root / "fetchlib", "fetchlib", ["v1.0.0"])
+    (repo / "cmake").mkdir()
+    (repo / "cmake" / "Shared.cmake").write_text('message(STATUS "Shared.cmake of fetchlib")\n')
+    cml = repo / "CMakeLists.txt"
+    cml.write_text(cml.read_text() + 'list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")\ninclude(Shared)\n')
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "module")
+    git(repo, "tag", "-f", "v1.0.0")
+    ours = project.src / "mine"
+    ours.mkdir()
+    (ours / "Shared.cmake").write_text('message(STATUS "Shared.cmake of the parent")\n')
+    project.write(fetch_toml(repo), 'list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/mine")\n' + FETCHLIB
+                  + '\nmessage(STATUS "module path after: ${CMAKE_MODULE_PATH}")')
+    out = project.configure("-DPOLYBIND_DEPS_PIN=OFF")
+    assert "Shared.cmake of fetchlib" in out.stdout
+    assert "Shared.cmake of the parent" not in out.stdout
+    assert "module path after: " + (project.src / "mine").as_posix() in out.stdout  # and ours is back afterwards
+
+
+def test_fetch_keeps_module_paths_outside_our_tree(project: Project) -> None:
+    repo = make_repo(project.root / "fetchlib", "fetchlib", ["v1.0.0"])
+    cml = repo / "CMakeLists.txt"
+    cml.write_text(cml.read_text() + "include(Outside)\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "uses a module of the toolchain")
+    git(repo, "tag", "-f", "v1.0.0")
+    outside = project.root / "toolchain-modules"  # a package manager's directory: not under the source or the build tree
+    outside.mkdir()
+    (outside / "Outside.cmake").write_text('message(STATUS "Outside.cmake found")\n')
+    project.write(fetch_toml(repo), f'list(APPEND CMAKE_MODULE_PATH "{outside.as_posix()}")\n' + FETCHLIB)
+    out = project.configure("-DPOLYBIND_DEPS_PIN=OFF")
+    assert "Outside.cmake found" in out.stdout
+
+
 def test_no_tag_in_range(project: Project) -> None:
     repo = make_repo(project.root / "fetchlib", "fetchlib", ["v5.0.0"])
     project.write(fetch_toml(repo), FETCHLIB)
